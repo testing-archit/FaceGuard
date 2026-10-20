@@ -9,7 +9,14 @@ import argparse
 import sys
 
 from core.errors import FaceGuardError
-from core.pipeline import analyse_image, check_paths, read_image, render_image, write_image
+from core.pipeline import (
+    analyse_image,
+    check_paths,
+    process_video_per_frame,
+    read_image,
+    render_image,
+    write_image,
+)
 from core.types import DETECTORS, MODES, TRACKERS, Config
 
 
@@ -50,6 +57,26 @@ def run_image(src: str, dst: str, cfg: Config) -> None:
         print(f"No faces detected. Wrote an unchanged copy -> {dst}")
 
 
+def print_progress(done: int, total: int) -> None:
+    if total <= 0 or done % 10 and done != total:
+        return
+    width = 30
+    filled = min(width, width * done // total)
+    print(f"\r[{'#' * filled}{'.' * (width - filled)}] {done}/{total} frames", end="", file=sys.stderr)
+    if done >= total:
+        print(file=sys.stderr)
+
+
+def run_video(src: str, dst: str, cfg: Config) -> None:
+    stats = process_video_per_frame(src, dst, cfg, print_progress)
+    for w in stats.warnings:
+        print(f"warning: {w}", file=sys.stderr)
+    print(
+        f"Processed {stats.frames} frames at {stats.fps:.1f} FPS "
+        f"({stats.total_seconds:.1f} s total) -> {dst}"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -58,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         if kind == "image":
             run_image(args.input, args.output, cfg)
         else:
-            raise FaceGuardError("Video input is not supported yet.")
+            run_video(args.input, args.output, cfg)
     except (FaceGuardError, ValueError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

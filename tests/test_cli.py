@@ -29,3 +29,18 @@ def test_image_export_keeps_resolution(tmp_path, mode):
     out = tmp_path / f"out_{mode}.png"
     assert cli.main(["--input", str(SAMPLE), "--output", str(out), "--mode", mode]) == 0
     assert cv2.imread(str(out)).shape == cv2.imread(str(SAMPLE)).shape
+
+
+SYNTH = Path("data/samples/synthetic_er.mp4")
+
+
+@pytest.mark.skipif(not SYNTH.exists(), reason="run scripts/make_synthetic_clip.py")
+def test_video_export_keeps_size_fps_and_audio(tmp_path):
+    from core.video_io import VideoReader, has_audio
+
+    out = tmp_path / "out.mp4"
+    assert cli.main(["--input", str(SYNTH), "--output", str(out), "--keep-audio"]) == 0
+    with VideoReader(SYNTH) as a, VideoReader(out) as b:
+        assert (a.info.width, a.info.height, a.info.fps) == (b.info.width, b.info.height, b.info.fps)
+        assert b.info.frame_count == a.info.frame_count
+    assert has_audio(out)

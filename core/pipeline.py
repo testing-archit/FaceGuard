@@ -6,6 +6,9 @@ the same two steps.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -15,6 +18,24 @@ from core.detectors import Detector, make_detector
 from core.errors import FaceGuardError, media_kind
 from core.redact import redact
 from core.types import Box, Config, Detection
+from core.video_io import VideoReader, VideoWriter, finalise, limit_warnings
+
+Progress = Callable[[int, int], None]  # (frames done, total frames)
+
+
+@dataclass
+class RunStats:
+    """What happened during one video run; feeds the evaluation tables."""
+
+    frames: int = 0
+    loop_seconds: float = 0.0  # decode + detect/track + redact + write
+    total_seconds: float = 0.0  # including ffmpeg finalisation
+    faces_redacted: int = 0  # sum over frames
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def fps(self) -> float:
+        return self.frames / self.loop_seconds if self.loop_seconds > 0 else 0.0
 
 
 def read_image(path: str | Path) -> np.ndarray:
@@ -56,3 +77,33 @@ def check_paths(src: str | Path, dst: str | Path) -> str:
     if dst.resolve() == src.resolve():
         raise FaceGuardError("Output path is the same as the input. FaceGuard never modifies the source file.")
     return kind
+
+
+def process_video_per_frame(
+    src: str | Path, dst: str | Path, cfg: Config, progress: Progress | None = None
+) -> RunStats:
+    """Baseline: run the detector on every frame, redact, write.
+
+    No tracking, so any frame where the detector misses a face leaks it.
+    This is the reference point the tracking pipeline is measured against.
+    """
+    stats = RunStats()
+    detector = make_detector(cfg)
+    start = time.perf_counter()
+    with VideoReader(src) as reader:
+        stats.warnings += limit_warnings(reader.info)
+        total = reader.info.frame_count
+        with VideoWriter(dst, reader.info) as writer:
+            for i, frame in enumerate(reader):
+                boxes = [d.box for d in detector.detect(frame)]
+                writer.write(redact(frame, boxes, cfg))
+                stats.frames += 1
+                stats.faces_redacted += len(boxes)
+                if progress:
+                    progress(i + 1, total)
+    stats.loop_seconds = time.perf_counter() - start
+    if stats.frames == 0:
+        raise FaceGuardError(f"No frames could be decoded from {src}.")
+    stats.warnings += finalise(writer.path, dst, src if cfg.keep_audio else None)
+    stats.total_seconds = time.perf_counter() - start
+    return stats
