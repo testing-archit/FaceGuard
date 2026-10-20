@@ -272,8 +272,10 @@ For each box:
    - **blur** — `cv2.GaussianBlur`, kernel = `odd(box.w * cfg.blur_strength)`,
      minimum 11. Scaling with box size matters: a fixed kernel under-blurs large
      faces and obliterates small ones.
-   - **pixelate** — resize down to `pixel_blocks × pixel_blocks` with
-     `INTER_LINEAR`, resize back up with `INTER_NEAREST`.
+   - **pixelate** — choose a block size so the padded face spans
+     `pixel_blocks` blocks across, resize down with `INTER_AREA` (a true
+     block average; `INTER_LINEAR` samples only a few pixels per block), resize
+     back up with `INTER_NEAREST`.
    - **fill** — solid colour.
 4. Build the mask: a filled ellipse inscribed in the padded box, Gaussian
    blurred by `feather_frac * box.w`, then `alpha = clip(2 * blurred, 0, 1)`.
