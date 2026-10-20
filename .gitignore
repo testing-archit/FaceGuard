@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Outputs
+out/
+eval/out/*.png
+*.silent.mp4
+
+# Local media: real clips contain identifiable people, never commit them
+data/samples/*
+!data/samples/.gitkeep
+
+.DS_Store

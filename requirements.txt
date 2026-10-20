@@ -1,0 +1,7 @@
+opencv-contrib-python>=4.10,<6
+numpy>=1.24
+streamlit>=1.30
+streamlit-drawable-canvas>=0.9.3
+pyyaml>=6.0
+matplotlib>=3.7
+pytest>=7.4
