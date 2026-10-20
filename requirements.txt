@@ -1,7 +1,6 @@
-opencv-contrib-python>=4.10,<6
+opencv-contrib-python>=4.10,<6   # contrib build: CSRT/KCF trackers
 numpy>=1.24
-streamlit>=1.30
-streamlit-drawable-canvas>=0.9.3
-pyyaml>=6.0
-matplotlib>=3.7
+streamlit>=1.30                  # UI
+pyyaml>=6.0                      # eval/experiments.yaml
+matplotlib>=3.7                  # eval plots
 pytest>=7.4

@@ -8,7 +8,7 @@ Tick boxes in the same commit as the work.
 ## Week 1 — Images (M1)
 
 - [ ] Repo skeleton, venv, `requirements.txt`
-- [ ] `scripts/download_model.py` fetches the YuNet ONNX and verifies its size
+- [ ] `scripts/download_model.py` fetches the YuNet ONNX and verifies its SHA-256
 - [ ] `core/types.py`: `Box` (with `iou`, `pad`), `Detection`, `Track`, `Config`
 - [ ] `core/detectors.py`: `YuNetDetector` with correct `setInputSize` handling
       and `None` guard
@@ -47,8 +47,9 @@ plays correctly. Flicker is expected at this stage — that is the point.
 - [ ] Measure FPS and leak frames against Week 2 baseline
 
 **Acceptance:** same clip at `--detect-interval 10 --tracker lk` has **higher
-FPS and fewer leak frames** than the Week 2 baseline, with both numbers written
-into `docs/RESULTS.md`.
+FPS** than the Week 2 baseline, and leak frames are measured for both and
+written into `docs/RESULTS.md`. An increase in leak frames is a valid result if
+it is explained; the criterion must not force an outcome.
 
 ---
 
@@ -64,8 +65,9 @@ into `docs/RESULTS.md`.
 - [ ] Frame scrubber for video preview
 - [ ] Privacy hint in the UI: fill is strongest, blur is weakest
 
-**Acceptance:** a user can untick person 2 of 4, draw one manual box over a
-missed face, preview, and export, without touching the CLI.
+**Acceptance:** a user can untick person 2 of 4, delete one false positive,
+draw one manual box over a missed face, preview, and export, without touching
+the CLI.
 
 **Freeze features here.** Everything after this is evaluation and writing.
 

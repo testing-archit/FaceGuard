@@ -23,19 +23,20 @@ protect them is self-defeating. Hence: local only.
 - Three redaction modes: Gaussian blur, pixelation, solid fill
 - Per-person selection — tick a face once, it stays hidden through the clip
 - Manual box drawing to cover anything the detector missed
-- Preview before export; original audio preserved via ffmpeg mux
+- Preview before export; optional audio preservation via ffmpeg mux
+  (`--keep-audio`)
 
 ## Install
 
 Requires Python 3.10+ and `ffmpeg` on your PATH.
 
 ```bash
-git clone <your-repo-url> faceguard
+git clone https://github.com/testing-archit/FaceGuard.git faceguard
 cd faceguard
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python scripts/download_model.py   # downloads the YuNet ONNX model (~338 KB)
+python scripts/download_model.py   # only if models/ is missing; the model is committed (~224 KB)
 ```
 
 `opencv-contrib-python` is required, not `opencv-python`. The CSRT and KCF
@@ -68,7 +69,7 @@ python cli.py --input clip.mp4 --output out.mp4 --mode pixelate \
 | `--tracker` | `lk` | `lk`, `csrt`, `kcf`, or `none` |
 | `--detect-interval` | `10` | Run the detector every N frames |
 | `--conf` | `0.6` | Detection confidence threshold |
-| `--padding` | `0.2` | Expand each box by this fraction before masking |
+| `--padding` | `0.25` | Expand each box by this fraction of its size, per side |
 | `--keep-audio` | off | Mux the original audio back into the output |
 
 ## A note on how private this actually is
@@ -89,4 +90,5 @@ See `docs/ARCHITECTURE.md`.
 
 ## License
 
-MIT (code). The YuNet model is distributed under its own OpenCV Zoo license.
+MIT (code). The YuNet model is also MIT-licensed (Copyright (c) 2020 Shiqi Yu),
+see the OpenCV Zoo `models/face_detection_yunet/LICENSE`.

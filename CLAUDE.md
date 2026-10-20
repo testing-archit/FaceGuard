@@ -14,8 +14,8 @@ Read `docs/SPEC.md` for requirements, `docs/ARCHITECTURE.md` for design,
 ## Hard constraints — do not violate these
 
 1. **Fully offline at runtime.** No network calls during processing. No cloud
-   APIs, no paid services, no telemetry. The ONNX model is downloaded once
-   during setup and committed to `models/`.
+   APIs, no paid services, no telemetry. The ONNX model is committed to
+   `models/`; `scripts/download_model.py` only restores it if missing.
 2. **CPU only.** No CUDA, no GPU-specific code paths. Must run on a mid-range
    laptop.
 3. **No model training.** Use the pretrained YuNet ONNX model as-is.
@@ -25,7 +25,7 @@ Read `docs/SPEC.md` for requirements, `docs/ARCHITECTURE.md` for design,
 
 ## Stack
 
-- Python 3.10+
+- Python 3.10+ (developed on 3.13 with OpenCV 5.0.0)
 - `opencv-contrib-python>=4.10,<6` (contrib is required — `TrackerCSRT` and
   `TrackerKCF` are not in the base `opencv-python` wheel)
 - `numpy`
@@ -59,9 +59,11 @@ Read `docs/SPEC.md` for requirements, `docs/ARCHITECTURE.md` for design,
 - Every tunable number (detection interval, thresholds, blur strength, box
   padding) lives in `Config` with a documented default. **No magic numbers
   inline.**
-- Detectors implement one interface: `detect(frame: np.ndarray) -> list[Detection]`.
+- Detectors implement one interface:
+  `detect(frame: np.ndarray, gray: np.ndarray | None = None) -> list[Detection]`.
   Swapping YuNet for Haar must be a single config change.
-- Trackers implement: `init(frame, box)`, `update(frame) -> Box | None`.
+- Trackers implement: `init(frame, gray, box)`, `update(frame, gray) -> Box | None`.
+  The grayscale copy is computed once per frame by the pipeline and shared.
 - Prefer small pure functions that take and return arrays. Easier to test.
 - Docstrings should state the CV concept used (e.g. "pyramidal Lucas-Kanade,
   brightness-constancy assumption") because this feeds the report.

@@ -16,7 +16,7 @@ short videos, with human review before export.
 | User | Need |
 |---|---|
 | Student vlogger / campus content creator | Hide bystanders in vox-pop and campus footage |
-| Event photographer | Bulk-redact crowd photos before sharing |
+| Event photographer | Redact crowd photos before sharing |
 | Teacher | Share a classroom clip without exposing students |
 | Student journalist | Protect sources and uninvolved passers-by |
 
@@ -45,7 +45,8 @@ short videos, with human review before export.
 - **FR-1** Accept image files: `.jpg`, `.jpeg`, `.png`
 - **FR-2** Accept video files: `.mp4`, `.avi`, `.mov`
 - **FR-3** Reject unsupported files with a clear message, never a stack trace
-- **FR-4** Warn, but proceed, if video exceeds 60 seconds or 1080p
+- **FR-4** Warn, but proceed, if video exceeds 60 seconds or 1080p. Videos
+  over 2 minutes are processed but are outside the tested envelope (NFR-2)
 
 ### Detection
 - **FR-5** Detect faces using YuNet via `cv2.FaceDetectorYN`
@@ -60,15 +61,19 @@ short videos, with human review before export.
 - **FR-12** Offer CSRT and KCF as alternative trackers for comparison
 - **FR-13** Assign a stable integer ID to each tracked person
 - **FR-14** Associate new detections to existing tracks by IoU, threshold 0.3
-- **FR-15** Keep an unmatched track alive for a grace period (default 15 frames)
-  before deleting it, so brief occlusion does not break identity
-- **FR-16** Log every suspected ID switch for the evaluation report
+- **FR-15** Keep an unmatched track alive for a grace period (default 15 video
+  frames) before deleting it, so brief occlusion does not break identity.
+  Tracks in their grace period **continue to be propagated and redacted**
+- **FR-16** Log every suspected ID switch (two tracks converging on one face)
+  for the evaluation report
 
 ### Redaction
 - **FR-17** Support three modes: Gaussian blur, pixelation, solid fill
 - **FR-18** Scale blur kernel and pixelation block size with face box size
 - **FR-19** Pad each box by a configurable fraction (default 0.2) before masking
-- **FR-20** Use an elliptical mask with softened edges, not a hard rectangle
+- **FR-20** Use an elliptical mask with softened edges, not a hard rectangle.
+  The mask is fully opaque over the whole face box; softening happens only
+  outside it
 - **FR-21** Never modify the source file; always write a new output file
 
 ### Review and correction
@@ -90,7 +95,8 @@ short videos, with human review before export.
 - **NFR-1** Process a 720p image in under 1 second on a mid-range laptop CPU
 - **NFR-2** Process 30 seconds of 720p/30fps video in under 3 minutes with
   tracking enabled
-- **NFR-3** Zero outbound network requests during processing (verifiable)
+- **NFR-3** Zero outbound network requests during processing, verified by a
+  test that blocks socket connections for a full pipeline run
 - **NFR-4** Peak memory under 2 GB; do not load an entire video into RAM
 - **NFR-5** Every error surfaces as a readable message in the UI
 
@@ -100,8 +106,8 @@ short videos, with human review before export.
 |---|---|
 | M1 Images | A photo with 5 faces is redacted correctly in all 3 modes and exported at original resolution |
 | M2 Video baseline | A 20 s clip is processed with per-frame detection and exported with audio intact |
-| M3 Tracking | The same clip processed with `--detect-interval 10 --tracker lk` has **fewer leak frames and higher FPS** than M2, with both numbers recorded |
-| M4 UI | A user can untick person 2 of 4, draw one manual box, preview, and export, without touching the CLI |
+| M3 Tracking | The same clip processed with `--detect-interval 10 --tracker lk` has **higher FPS** than M2, and leak frames are measured and recorded for both. Any increase in leak frames is explained in `docs/RESULTS.md` |
+| M4 UI | A user can untick person 2 of 4, delete one false positive, draw one manual box, preview, and export, without touching the CLI |
 | M5 Evaluation | `eval/run_experiments.py` produces the full results table in `docs/RESULTS.md` |
 
 ## 8. Out-of-scope ideas parked for future work

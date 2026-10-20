@@ -75,7 +75,8 @@ For each ground-truth face box G and the union M of all applied masks:
 coverage(G) = area(G ∩ M) / area(G)
 ```
 
-Report the mean across all faces and all frames. This is more honest than
+A pixel counts as masked when the mask alpha is >= 0.5. Report the mean
+across all faces and all frames. This is more honest than
 detection recall because it accounts for box padding and mask shape, which is
 what actually determines whether a person is hidden.
 
@@ -103,6 +104,10 @@ numbers.
 id_consistency = frames where a track keeps the correct person identity
                  / total frames that track exists
 ```
+
+Each predicted track is assigned to the ground-truth identity it overlaps
+(IoU >= 0.5) in the most frames. A frame where the track overlaps a *different*
+ground-truth identity counts against it.
 
 Also report the raw count of detected ID switches.
 
@@ -145,7 +150,10 @@ small <40 px), motion (static / moving), occlusion (clear / partial), pose
 reader exactly when the tool should not be trusted.
 
 ### E6 — Padding sweep
-`padding ∈ {0.0, 0.1, 0.2, 0.3}` against coverage. Justifies the default and
+`padding ∈ {0.0, 0.1, 0.2, 0.25, 0.3}` against coverage. Geometry predicts a
+step: an ellipse inscribed in the padded box only contains the face box's
+corners once padding >= (√2 − 1)/2 ≈ 0.207 per side. Below that, coverage of
+a perfectly detected face is capped (π/4 ≈ 78.5% at padding 0). Justifies the default and
 shows you understood that detector boxes are tighter than the region that
 actually needs hiding.
 
