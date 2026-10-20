@@ -36,3 +36,19 @@ def test_input_size_follows_resolution():
     assert big_face.box.w == pytest.approx(2 * small_face.box.w, rel=0.15)
     assert small_face.landmarks.shape == (5, 2)
     assert 0.0 < small_face.score <= 1.0
+
+
+def test_haar_blank_frame_returns_empty_list():
+    from core.detectors import HaarDetector
+
+    assert HaarDetector(Config(detector="haar")).detect(np.zeros((240, 320, 3), np.uint8)) == []
+
+
+@pytest.mark.skipif(not (SAMPLES / "addams-family.png").exists(), reason="run scripts/fetch_samples.py")
+def test_haar_same_interface_and_finds_faces():
+    from core.detectors import make_detector
+
+    det = make_detector(Config(detector="haar"))
+    found = det.detect(cv2.imread(str(SAMPLES / "addams-family.png")))
+    assert len(found) >= 3
+    assert all(d.score == 1.0 and d.landmarks is None for d in found)

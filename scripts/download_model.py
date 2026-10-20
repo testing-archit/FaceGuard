@@ -1,8 +1,12 @@
-"""Fetch the YuNet face detector from OpenCV Zoo and verify it.
+"""Fetch FaceGuard's two detector models and verify them.
 
 This is the only part of FaceGuard that touches the network, and it runs once
-during setup. The model is also committed to `models/`, so this script only
-matters if that file is missing or corrupted.
+during setup. Both files are also committed to `models/`, so this script only
+matters if one is missing or corrupted.
+
+- YuNet ONNX from OpenCV Zoo (MIT licence)
+- Haar frontal-face cascade from the OpenCV repo (Intel licence, see the
+  header of the XML). OpenCV 5 wheels no longer bundle the cascades.
 """
 
 from __future__ import annotations
@@ -10,19 +14,38 @@ from __future__ import annotations
 import hashlib
 import sys
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
-# Pinned to an exact opencv_zoo commit so the bytes can never change under us.
-ZOO_COMMIT = "26cc381e4d2594bb9f47a26eb8fd96c94a13660d"
-MODEL_NAME = "face_detection_yunet_2026may.onnx"
-MODEL_URL = (
-    "https://media.githubusercontent.com/media/opencv/opencv_zoo/"
-    f"{ZOO_COMMIT}/models/face_detection_yunet/{MODEL_NAME}"
-)
-MODEL_SHA256 = "ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0"
-MODEL_SIZE = 229_738
+MODELS = Path(__file__).resolve().parent.parent / "models"
 
-MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / MODEL_NAME
+
+@dataclass(frozen=True)
+class Asset:
+    name: str
+    url: str  # pinned to an exact commit so the bytes can never change
+    sha256: str
+    size: int
+
+
+ASSETS = [
+    Asset(
+        name="face_detection_yunet_2026may.onnx",
+        url="https://media.githubusercontent.com/media/opencv/opencv_zoo/"
+        "26cc381e4d2594bb9f47a26eb8fd96c94a13660d/models/face_detection_yunet/"
+        "face_detection_yunet_2026may.onnx",
+        sha256="ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
+        size=229_738,
+    ),
+    Asset(
+        name="haarcascade_frontalface_default.xml",
+        url="https://raw.githubusercontent.com/opencv/opencv/"
+        "b7553d4e2eddc5645023a94a850fe092dd9f223e/data/haarcascades/"
+        "haarcascade_frontalface_default.xml",
+        sha256="0f7d4527844eb514d4a4948e822da90fbb16a34a0bbbbc6adc6498747a5aafb0",
+        size=930_127,
+    ),
+]
 
 
 def sha256_of(path: Path) -> str:
@@ -34,40 +57,37 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def is_valid(path: Path) -> bool:
+def is_valid(path: Path, asset: Asset) -> bool:
     """True when the file exists and matches the pinned size and hash."""
-    return (
-        path.is_file()
-        and path.stat().st_size == MODEL_SIZE
-        and sha256_of(path) == MODEL_SHA256
-    )
+    return path.is_file() and path.stat().st_size == asset.size and sha256_of(path) == asset.sha256
+
+
+def fetch(asset: Asset) -> bool:
+    dest = MODELS / asset.name
+    if is_valid(dest, asset):
+        print(f"{asset.name} already present and verified.")
+        return True
+
+    tmp = dest.with_suffix(".part")
+    print(f"Downloading {asset.name} ...")
+    try:
+        urllib.request.urlretrieve(asset.url, tmp)
+    except OSError as exc:
+        print(f"Download failed: {exc}", file=sys.stderr)
+        return False
+    if not is_valid(tmp, asset):
+        tmp.unlink(missing_ok=True)
+        print(f"{asset.name} failed the SHA-256 check. Not installing it.", file=sys.stderr)
+        return False
+    tmp.replace(dest)
+    print(f"Saved and verified {dest}")
+    return True
 
 
 def main() -> int:
-    if is_valid(MODEL_PATH):
-        print(f"{MODEL_PATH.name} already present and verified.")
-        return 0
-
-    MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = MODEL_PATH.with_suffix(".part")
-    print(f"Downloading {MODEL_NAME} ...")
-    try:
-        urllib.request.urlretrieve(MODEL_URL, tmp)
-    except OSError as exc:
-        print(f"Download failed: {exc}", file=sys.stderr)
-        return 1
-
-    if not is_valid(tmp):
-        tmp.unlink(missing_ok=True)
-        print(
-            "Downloaded file failed the SHA-256 check. Not installing it.",
-            file=sys.stderr,
-        )
-        return 1
-
-    tmp.replace(MODEL_PATH)
-    print(f"Saved and verified {MODEL_PATH}")
-    return 0
+    MODELS.mkdir(parents=True, exist_ok=True)
+    results = [fetch(a) for a in ASSETS]
+    return 0 if all(results) else 1
 
 
 if __name__ == "__main__":

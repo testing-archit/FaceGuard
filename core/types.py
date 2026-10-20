@@ -94,6 +94,7 @@ class Config:
     """Every tunable number in FaceGuard, with its default and unit."""
 
     model_path: str = "models/face_detection_yunet_2026may.onnx"
+    haar_path: str = "models/haarcascade_frontalface_default.xml"
 
     # detection
     detector: str = "yunet"  # yunet | haar

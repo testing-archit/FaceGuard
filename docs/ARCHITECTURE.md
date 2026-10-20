@@ -9,9 +9,12 @@ faceguard/
 ├── requirements.txt
 ├── cli.py                      # headless entry point
 ├── models/
-│   └── face_detection_yunet_2026may.onnx   # committed; Haar XML ships with cv2.data
+│   ├── face_detection_yunet_2026may.onnx   # committed
+│   └── haarcascade_frontalface_default.xml # committed; OpenCV 5 wheels omit it
 ├── scripts/
-│   └── download_model.py       # one-time, verifies SHA-256
+│   ├── download_model.py       # restores models/, verifies SHA-256
+│   ├── fetch_samples.py        # public OpenCV test photos for development
+│   └── make_synthetic_clip.py  # 20 s clip with exact per-frame ground truth
 ├── core/
 │   ├── __init__.py
 │   ├── types.py                # Box, Detection, Track, Config dataclasses
@@ -170,9 +173,10 @@ H/W input dims, which OpenCV 5's ONNX engine needs for arbitrary frame sizes.
 
 ### HaarDetector
 
-`cv2.CascadeClassifier` on the grayscale frame, loaded from
-`cv2.data.haarcascades + "haarcascade_frontalface_default.xml"`. Exists purely
-as the classical
+`cv2.CascadeClassifier` on the histogram-equalised grayscale frame, loaded
+from `models/haarcascade_frontalface_default.xml` (OpenCV 5 wheels no longer
+bundle `cv2.data` cascades, so it is pinned and committed like the ONNX
+model). Exists purely as the classical
 baseline for the report. No landmarks, no confidence score — synthesise
 `score=1.0` so it satisfies the `Detection` type.
 

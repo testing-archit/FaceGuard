@@ -14,8 +14,9 @@ Read `docs/SPEC.md` for requirements, `docs/ARCHITECTURE.md` for design,
 ## Hard constraints — do not violate these
 
 1. **Fully offline at runtime.** No network calls during processing. No cloud
-   APIs, no paid services, no telemetry. The ONNX model is committed to
-   `models/`; `scripts/download_model.py` only restores it if missing.
+   APIs, no paid services, no telemetry. Both detector models (YuNet ONNX,
+   Haar XML) are committed to `models/`; `scripts/download_model.py` only
+   restores them if missing.
 2. **CPU only.** No CUDA, no GPU-specific code paths. Must run on a mid-range
    laptop.
 3. **No model training.** Use the pretrained YuNet ONNX model as-is.

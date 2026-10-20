@@ -73,8 +73,48 @@ def _row_to_detection(row: np.ndarray) -> Detection:
     )
 
 
+class HaarDetector:
+    """Viola-Jones Haar cascade, the classical baseline.
+
+    Haar-like rectangle features are evaluated quickly on an integral image
+    and combined by a boosted cascade that rejects most windows in the first
+    stages, scanned over an image pyramid. The features were learned on
+    frontal faces, so pose and lighting changes break it. Histogram
+    equalisation first, as in OpenCV's reference usage, to give it a fair
+    chance under uneven lighting.
+
+    The cascade gives no confidence score and no landmarks; score is
+    synthesised as 1.0 to satisfy the Detection type.
+    """
+
+    def __init__(self, cfg: Config) -> None:
+        path = Path(cfg.haar_path)
+        self._cascade = cv2.CascadeClassifier(str(path)) if path.is_file() else None
+        if self._cascade is None or self._cascade.empty():
+            raise FileNotFoundError(
+                f"Haar cascade not found at {path}. "
+                "Run `python scripts/download_model.py` to restore it."
+            )
+        self._scale_factor = cfg.haar_scale_factor
+        self._min_neighbors = cfg.haar_min_neighbors
+        self._min_size = (cfg.min_face_px, cfg.min_face_px)
+
+    def detect(self, frame: np.ndarray, gray: np.ndarray | None = None) -> list[Detection]:
+        if gray is None:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self._cascade.detectMultiScale(
+            cv2.equalizeHist(gray),
+            scaleFactor=self._scale_factor,
+            minNeighbors=self._min_neighbors,
+            minSize=self._min_size,
+        )
+        return [Detection(box=Box(*map(int, f)), score=1.0) for f in faces]
+
+
 def make_detector(cfg: Config) -> Detector:
     """Build the detector named by `cfg.detector`."""
     if cfg.detector == "yunet":
         return YuNetDetector(cfg)
+    if cfg.detector == "haar":
+        return HaarDetector(cfg)
     raise ValueError(f"Unknown detector {cfg.detector!r}")
