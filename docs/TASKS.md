@@ -23,12 +23,12 @@ modes, exported at original resolution, with no visible rectangular seams.
 
 ## Week 2 — Video baseline (M2)
 
-- [ ] `core/video_io.py`: streaming frame reader, writer preserving fps and size
-- [ ] `core/pipeline.py`: per-frame detection, redact, write
-- [ ] ffmpeg audio mux behind `--keep-audio`, graceful when ffmpeg is absent
-- [ ] Progress reporting (frames done / total)
-- [ ] `HaarDetector` behind the same interface
-- [ ] Record baseline FPS for per-frame detection in `docs/RESULTS.md`
+- [x] `core/video_io.py`: streaming frame reader, writer preserving fps and size
+- [x] `core/pipeline.py`: per-frame detection, redact, write
+- [x] ffmpeg audio mux behind `--keep-audio`, graceful when ffmpeg is absent
+- [x] Progress reporting (frames done / total)
+- [x] `HaarDetector` behind the same interface
+- [x] Record baseline FPS for per-frame detection in `docs/RESULTS.md`
 
 **Acceptance:** a 20 s clip processes end to end, exports with audio intact,
 plays correctly. Flicker is expected at this stage — that is the point.
