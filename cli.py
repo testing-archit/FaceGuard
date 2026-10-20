@@ -12,9 +12,10 @@ from core.errors import FaceGuardError
 from core.pipeline import (
     analyse_image,
     check_paths,
-    process_video_per_frame,
+    process_video,
     read_image,
     render_image,
+    save_tracks,
     write_image,
 )
 from core.types import DETECTORS, MODES, TRACKERS, Config
@@ -32,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--conf", type=float, default=d.conf_threshold, help="detection confidence threshold")
     p.add_argument("--padding", type=float, default=d.padding, help="box growth per side, as a fraction of box size")
     p.add_argument("--keep-audio", action="store_true", help="mux the original audio back into the output")
+    p.add_argument("--save-tracks", metavar="JSON", help="video only: write per-frame track boxes for evaluation")
     return p
 
 
@@ -58,7 +60,7 @@ def run_image(src: str, dst: str, cfg: Config) -> None:
 
 
 def print_progress(done: int, total: int) -> None:
-    if total <= 0 or done % 10 and done != total:
+    if not sys.stderr.isatty() or total <= 0 or done % 10 and done != total:
         return
     width = 30
     filled = min(width, width * done // total)
@@ -67,14 +69,20 @@ def print_progress(done: int, total: int) -> None:
         print(file=sys.stderr)
 
 
-def run_video(src: str, dst: str, cfg: Config) -> None:
-    stats = process_video_per_frame(src, dst, cfg, print_progress)
+def run_video(src: str, dst: str, cfg: Config, tracks_path: str | None = None) -> None:
+    analysis = process_video(src, dst, cfg, print_progress)
+    stats = analysis.stats
     for w in stats.warnings:
         print(f"warning: {w}", file=sys.stderr)
     print(
         f"Processed {stats.frames} frames at {stats.fps:.1f} FPS "
-        f"({stats.total_seconds:.1f} s total) -> {dst}"
+        f"({stats.total_seconds:.1f} s total), {len(analysis.tracks)} track(s), "
+        f"{len(analysis.events)} suspected ID switch(es) -> {dst}"
     )
+    for e in analysis.events:
+        print(f"  frame {e.frame}: track {e.dropped} merged into {e.kept}", file=sys.stderr)
+    if tracks_path:
+        save_tracks(tracks_path, analysis.tracks)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -85,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         if kind == "image":
             run_image(args.input, args.output, cfg)
         else:
-            run_video(args.input, args.output, cfg)
+            run_video(args.input, args.output, cfg, args.save_tracks)
     except (FaceGuardError, ValueError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
