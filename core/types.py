@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 DETECTORS = ("yunet", "haar")
-TRACKERS = ("lk", "csrt", "kcf", "none")
+TRACKERS = ("lk", "csrt", "kcf", "none", "off")
 MODES = ("blur", "pixelate", "fill")
 
 
@@ -106,7 +106,11 @@ class Config:
     min_face_px: int = 24  # Haar minSize; also the "small face" bound
 
     # tracking
-    tracker: str = "lk"  # lk | csrt | kcf | none
+    # lk | csrt | kcf: propagate boxes between detections
+    # none: hold each box still between detections
+    # off:  pure per-frame baseline, a face is masked only on frames where it
+    #       is detected (forces detect_interval = 1, no grace period)
+    tracker: str = "lk"
     detect_interval: int = 10  # run the detector every N frames
     lk_max_corners: int = 40  # Shi-Tomasi corners seeded per face
     lk_quality_level: float = 0.01  # min corner response, relative to best
@@ -115,6 +119,7 @@ class Config:
     lk_pyr_levels: int = 3  # extra pyramid levels above full resolution
     lk_fb_threshold_px: float = 1.0  # forward-backward round-trip tolerance
     lk_min_points: int = 6  # fewer surviving points than this = track lost
+    lk_reseed_below: int = 12  # re-seed corners in the box below this many points
 
     # association
     iou_threshold: float = 0.3  # min IoU to match a detection to a track
