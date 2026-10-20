@@ -16,8 +16,10 @@ def test_coverage_no_prediction_is_zero():
 
 
 def test_coverage_zero_padding_caps_at_ellipse_area():
+    # Tiny feather isolates the geometry; the default outward feather pushes
+    # the alpha >= 0.5 edge a few pixels beyond the ellipse (~0.83 here).
     g = Box(100, 100, 200, 200)
-    c = coverage(g, [g], W, H, Config(padding=0.0))
+    c = coverage(g, [g], W, H, Config(padding=0.0, feather_frac=0.005))
     assert c == pytest.approx(3.14159 / 4, abs=0.02)
 
 

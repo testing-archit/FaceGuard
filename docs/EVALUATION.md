@@ -153,7 +153,8 @@ reader exactly when the tool should not be trusted.
 `padding ∈ {0.0, 0.1, 0.2, 0.25, 0.3}` against coverage. Geometry predicts a
 step: an ellipse inscribed in the padded box only contains the face box's
 corners once padding >= (√2 − 1)/2 ≈ 0.207 per side. Below that, coverage of
-a perfectly detected face is capped (π/4 ≈ 78.5% at padding 0). Justifies the default and
+a perfectly detected face is capped (π/4 ≈ 78.5% at padding 0, slightly
+more in practice because the outward feather extends the opaque edge). Justifies the default and
 shows you understood that detector boxes are tighter than the region that
 actually needs hiding.
 
