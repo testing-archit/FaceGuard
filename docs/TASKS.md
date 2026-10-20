@@ -7,14 +7,14 @@ Tick boxes in the same commit as the work.
 
 ## Week 1 — Images (M1)
 
-- [ ] Repo skeleton, venv, `requirements.txt`
-- [ ] `scripts/download_model.py` fetches the YuNet ONNX and verifies its SHA-256
-- [ ] `core/types.py`: `Box` (with `iou`, `pad`), `Detection`, `Track`, `Config`
-- [ ] `core/detectors.py`: `YuNetDetector` with correct `setInputSize` handling
+- [x] Repo skeleton, venv, `requirements.txt`
+- [x] `scripts/download_model.py` fetches the YuNet ONNX and verifies its SHA-256
+- [x] `core/types.py`: `Box` (with `iou`, `pad`), `Detection`, `Track`, `Config`
+- [x] `core/detectors.py`: `YuNetDetector` with correct `setInputSize` handling
       and `None` guard
-- [ ] `core/redact.py`: blur, pixelate, fill with elliptical feathered masks
-- [ ] `cli.py` handles single images
-- [ ] Unit tests for `Box.iou` and `Box.pad` edge cases (box at frame border)
+- [x] `core/redact.py`: blur, pixelate, fill with elliptical feathered masks
+- [x] `cli.py` handles single images
+- [x] Unit tests for `Box.iou` and `Box.pad` edge cases (box at frame border)
 
 **Acceptance:** a photo containing 5 faces is correctly redacted in all three
 modes, exported at original resolution, with no visible rectangular seams.
