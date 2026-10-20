@@ -77,3 +77,33 @@ def test_duplicates_merge_into_older_id_and_are_logged():
     tm, present = run(cfg, [[det(10, 10)], [det(10, 10), det(12, 10)]])
     assert present[1] == [1]
     assert len(tm.events) == 1 and tm.events[0].kept == 1 and tm.events[0].dropped == 2
+
+
+class FollowingTracker(NullTracker):
+    """Stands in for LK/CSRT: always reports the face as still there."""
+
+
+class LosingTracker(NullTracker):
+    """Reports the target lost from the first update."""
+
+    def update(self, frame, gray):
+        return None
+
+
+def run_with(cfg, factory, detections_per_frame):
+    tm = TrackManager(cfg, factory)
+    return [[t.id for t in tm.step(i, FRAME, GRAY, d)] for i, d in enumerate(detections_per_frame)]
+
+
+def test_followed_track_outlives_max_misses_until_unconfirmed_cap():
+    """Detector misses a rotated face, but the tracker still has it (D-012)."""
+    cfg = Config(tracker="lk", max_misses=3, max_unconfirmed=6)
+    present = run_with(cfg, FollowingTracker, [[det(10, 10)]] + [[] for _ in range(8)])
+    assert present == [[1]] * 7 + [[], []]  # kept through frame 6, gone at 7
+
+
+def test_lost_track_gets_short_grace_from_moment_lost():
+    cfg = Config(tracker="lk", max_misses=2, max_unconfirmed=60)
+    present = run_with(cfg, LosingTracker, [[det(10, 10)]] + [[] for _ in range(5)])
+    # lost on frame 1; kept while i - 1 <= 2
+    assert present == [[1], [1], [1], [1], [], []]

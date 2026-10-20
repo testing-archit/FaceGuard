@@ -112,4 +112,36 @@ Streamlit preview would be blank.
 the `mp4v` file with a warning when ffmpeg is absent.
 **Trade-off:** One extra encode per export.
 
-## D-012 — <next>
+## D-012 — Separate drift cap for tracks the tracker still follows
+**Date:** 2026-10-20
+**Context:** With one grace period (15 frames since the last detector match),
+tracks were deleted while LK and CSRT were still following the face. In the
+synthetic clip's rotation segment YuNet misses faces rolled ~40°; four tracks
+were deleted at frames 279–289 and those faces were exposed until the next
+detection at frame 300.
+**Options:** longer single grace period; separate limits for followed vs lost
+tracks; never delete followed tracks.
+**Decision:** A followed track survives `max_unconfirmed` = 60 frames (2 s at
+30 fps) without a detector match; a lost track keeps its frozen box for
+`max_misses` = 15 frames from the moment it was lost. "none" has no motion
+evidence, so it always uses the short limit.
+**Trade-off:** A drifting track can mask the wrong region for up to 2 s. For a
+redaction tool this costs precision, while early deletion costs recall.
+**Evidence:** Synthetic clip, interval 10: LK leak frames 35 → 15 (rotation
+20 → 0), CSRT 23 → 3. LK tracks 12 → 8 for 6 faces.
+
+## D-013 — Four LK pyramid levels instead of three
+**Date:** 2026-10-20
+**Context:** After D-012, LK's remaining 15 leak frames were one face lost
+during the whip pan once motion passed ~43 px/frame. The frozen box then
+missed the face and the next detection created a new ID.
+**Options:** `lk_pyr_levels` 3/4/5, `lk_win_size` 21/31.
+**Decision:** 4 levels, window 21.
+**Trade-off:** Negligible: each extra level is a quarter the size of the last.
+**Evidence:** Synthetic clip, interval 10. Leak frames / tracks / FPS:
+3 levels 15 / 8 / 81.8; 4 levels **0 / 6 / 79.7**; 5 levels 0 / 6 / 78.5;
+window 31 changes nothing. The coarsest level of a 4-level pyramid sees a
+60 px motion as under 4 px, inside LK's small-motion assumption. Tuned on the
+synthetic clip, so it must be confirmed on the real clips (E2/E3).
+
+## D-014 — <next>

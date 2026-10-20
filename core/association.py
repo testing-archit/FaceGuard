@@ -66,6 +66,9 @@ class TrackManager:
         self._cfg = cfg
         self._make_tracker = make_tracker
         self._hold = cfg.tracker != "off"  # "off" = no memory between frames
+        # Only real trackers produce evidence that a face is still there;
+        # "none" just holds a stale box, so it gets the short lost-track grace.
+        self._follows_motion = cfg.tracker in ("lk", "csrt", "kcf")
         self.live: list[Track] = []
         self.finished: list[Track] = []
         self.events: list[IdEvent] = []
@@ -81,8 +84,9 @@ class TrackManager:
         for t in self.live:
             box = self._trackers[t.id].update(frame, gray)
             if box is None:
-                t.lost = True  # box stays frozen at its last position
-            else:
+                if not t.lost:
+                    t.lost, t.lost_since = True, i  # box stays frozen at its last position
+            elif not t.lost:
                 t.box = box
 
         matched_ids: set[int] = set()
@@ -113,8 +117,7 @@ class TrackManager:
             self._trackers[t.id].init(frame, gray, t.box)
             matched_ids.add(t.id)
 
-        grace = cfg.max_misses if self._hold else 0
-        expired = {self.live[ti].id for ti in unmatched_t if i - self.live[ti].last_seen_frame > grace}
+        expired = {self.live[ti].id for ti in unmatched_t if self._expired(self.live[ti], i)}
 
         for di in unmatched_d:
             t = Track(id=self._next_id, box=detections[di].box, last_seen_frame=i)
@@ -129,6 +132,23 @@ class TrackManager:
         for t in [t for t in self.live if t.id in expired]:
             self._retire(t)
         return matched_ids - expired
+
+    def _expired(self, t: Track, i: int) -> bool:
+        """Lifecycle rule for a track the detector did not confirm on frame i.
+
+        - tracker still following: keep up to `max_unconfirmed` frames since the
+          last detector match; this caps drift (DECISIONS D-012)
+        - tracker lost, or no tracker ("none"): keep the frozen box for
+          `max_misses` frames
+        - "off": no memory at all
+        """
+        cfg = self._cfg
+        if not self._hold:
+            return True
+        if self._follows_motion and not t.lost:
+            return i - t.last_seen_frame > cfg.max_unconfirmed
+        since = t.lost_since if (self._follows_motion and t.lost) else t.last_seen_frame
+        return i - since > cfg.max_misses or i - t.last_seen_frame > cfg.max_unconfirmed
 
     def _merge_duplicates(self, i: int) -> set[int]:
         """Two tracks on one face: keep the older ID, drop the younger, log it."""

@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import cv2
@@ -217,9 +217,14 @@ def process_video(
     return analysis
 
 
-def tracks_to_json(tracks: list[Track]) -> dict:
-    """Serialise tracks for evaluation (`preds.json`) or for the UI session."""
+def tracks_to_json(tracks: list[Track], cfg: Config | None = None) -> dict:
+    """Serialise tracks for evaluation (`preds.json`) or for the UI session.
+
+    The config is stored with them because mask geometry (padding, feather)
+    decides what coverage the boxes actually achieve.
+    """
     return {
+        "config": asdict(cfg) if cfg else None,
         "tracks": [
             {
                 "id": t.id,
@@ -250,5 +255,5 @@ def tracks_from_json(data: dict) -> list[Track]:
     return tracks
 
 
-def save_tracks(path: str | Path, tracks: list[Track]) -> None:
-    Path(path).write_text(json.dumps(tracks_to_json(tracks)))
+def save_tracks(path: str | Path, tracks: list[Track], cfg: Config | None = None) -> None:
+    Path(path).write_text(json.dumps(tracks_to_json(tracks, cfg)))

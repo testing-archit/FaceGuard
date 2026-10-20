@@ -95,12 +95,13 @@ class Config:
     lk_quality_level: float = 0.01
     lk_min_distance: int = 3
     lk_win_size: int = 21
-    lk_pyr_levels: int = 3
+    lk_pyr_levels: int = 4           # 3 lost a face at ~45 px/frame (D-013)
     lk_fb_threshold_px: float = 1.0  # forward-backward round-trip tolerance
     lk_min_points: int = 6           # fewer survivors than this = lost
     # association
     iou_threshold: float = 0.3
-    max_misses: int = 15             # grace period, in VIDEO FRAMES
+    max_misses: int = 15             # frames a LOST track's frozen box is kept
+    max_unconfirmed: int = 60        # frames a still-tracked track may go unmatched
     duplicate_iou: float = 0.7       # two tracks above this are one face
     # redaction
     mode: str = "pixelate"           # blur | pixelate | fill
@@ -247,16 +248,20 @@ detections D, existing tracks T, current frame i
        create a new Track with the next free id, redact = True
        init a tracker on it
 5. for each unmatched track:
-       if i - track.last_seen_frame > max_misses: delete the track
+       if the tracker still follows it:
+           delete if i - track.last_seen_frame > max_unconfirmed   # drift cap
+       else (tracker lost it, or tracker = "none"):
+           delete if i - track.lost_since > max_misses             # frozen box
 6. for each pair of tracks with IoU > duplicate_iou:
        keep the older id, drop the other, log a possible ID switch with frame i
 ```
 
-The grace period is measured in frames (`i - last_seen_frame`), so its meaning
-does not change with `detect_interval`. A track in its grace period is still
-propagated and still redacted. If its tracker has lost it, the box stays
-frozen at the last position: this is a known leak source when the person keeps
-moving, and it is counted in the leak-frame metric.
+Both limits are measured in frames, so their meaning does not change with
+`detect_interval`. The split matters (DECISIONS D-012): a face rolled 40° is
+missed by YuNet but still followed by LK, and deleting it after 15 frames
+exposed it until the next detection. If a tracker has lost a face, the box
+stays frozen at the last position: this is a known leak source when the
+person keeps moving, and it is counted in the leak-frame metric.
 
 Track IDs are what make selective redaction work: the user toggles person 3 once
 and the decision follows that person for the rest of the clip.

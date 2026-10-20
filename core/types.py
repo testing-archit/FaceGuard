@@ -86,6 +86,7 @@ class Track:
     source: str = "detector"  # "detector" | "manual"
     last_seen_frame: int = 0  # last frame a detection matched this track
     lost: bool = False  # tracker returned None; box is frozen in place
+    lost_since: int = 0  # frame the tracker lost it (valid while lost)
     history: dict[int, Box] = field(default_factory=dict)
 
 
@@ -116,14 +117,15 @@ class Config:
     lk_quality_level: float = 0.01  # min corner response, relative to best
     lk_min_distance: int = 3  # px between seeded corners
     lk_win_size: int = 21  # px, LK integration window
-    lk_pyr_levels: int = 3  # extra pyramid levels above full resolution
+    lk_pyr_levels: int = 4  # extra pyramid levels above full resolution (D-013)
     lk_fb_threshold_px: float = 1.0  # forward-backward round-trip tolerance
     lk_min_points: int = 6  # fewer surviving points than this = track lost
     lk_reseed_below: int = 12  # re-seed corners in the box below this many points
 
     # association
     iou_threshold: float = 0.3  # min IoU to match a detection to a track
-    max_misses: int = 15  # grace period in video frames before deletion
+    max_misses: int = 15  # frames a LOST track (frozen box) is kept before deletion
+    max_unconfirmed: int = 60  # frames a still-tracked track may go without a detector match
     duplicate_iou: float = 0.7  # two tracks above this are the same face
 
     # redaction

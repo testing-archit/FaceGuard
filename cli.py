@@ -82,7 +82,7 @@ def run_video(src: str, dst: str, cfg: Config, tracks_path: str | None = None) -
     for e in analysis.events:
         print(f"  frame {e.frame}: track {e.dropped} merged into {e.kept}", file=sys.stderr)
     if tracks_path:
-        save_tracks(tracks_path, analysis.tracks)
+        save_tracks(tracks_path, analysis.tracks, cfg)
 
 
 def main(argv: list[str] | None = None) -> int:

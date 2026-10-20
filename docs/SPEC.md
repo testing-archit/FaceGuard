@@ -61,9 +61,11 @@ short videos, with human review before export.
 - **FR-12** Offer CSRT and KCF as alternative trackers for comparison
 - **FR-13** Assign a stable integer ID to each tracked person
 - **FR-14** Associate new detections to existing tracks by IoU, threshold 0.3
-- **FR-15** Keep an unmatched track alive for a grace period (default 15 video
-  frames) before deleting it, so brief occlusion does not break identity.
-  Tracks in their grace period **continue to be propagated and redacted**
+- **FR-15** Keep an unmatched track alive so brief detector misses do not
+  break identity or expose the face. While the tracker still follows the
+  face, keep it for up to 60 frames without a detector match (drift cap); if
+  the tracker loses it, keep the frozen box for a 15-frame grace period.
+  Tracks in either state **continue to be redacted**
 - **FR-16** Log every suspected ID switch (two tracks converging on one face)
   for the evaluation report
 
