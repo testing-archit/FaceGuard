@@ -14,7 +14,8 @@ faceguard/
 ├── scripts/
 │   ├── download_model.py       # restores models/, verifies SHA-256
 │   ├── fetch_samples.py        # public OpenCV test photos for development
-│   └── make_synthetic_clip.py  # 20 s clip with exact per-frame ground truth
+│   ├── make_synthetic_clip.py  # 20 s clip with exact per-frame ground truth
+│   └── make_crossing_clip.py   # 15 s clip: occlusion, crossing, entry
 ├── core/
 │   ├── __init__.py
 │   ├── types.py                # Box, Detection, Track, Config dataclasses
@@ -23,9 +24,11 @@ faceguard/
 │   ├── association.py          # IoU matching, track lifecycle
 │   ├── redact.py               # blur / pixelate / fill, mask building
 │   ├── video_io.py             # frame reader, writer, ffmpeg audio mux
-│   └── pipeline.py             # orchestration
+│   ├── pipeline.py             # orchestration, early detection, scene cuts
+│   └── review.py               # overlays, manual tracks, propagation, session files
 ├── ui/
 │   └── app.py                  # Streamlit; no CV logic lives here
+├── .streamlit/config.toml      # localhost only, usage statistics off
 ├── eval/
 │   ├── annotate.py             # manual ground-truth annotation helper
 │   ├── metrics.py              # precision, recall, coverage, leak frames
@@ -96,6 +99,8 @@ class Config:
     lk_min_distance: int = 3
     lk_win_size: int = 21
     lk_pyr_levels: int = 4           # 3 lost a face at ~45 px/frame (D-013)
+    lk_search_frac: float = 1.0      # LK runs on box + margin, not the frame (D-014)
+    lk_search_min_px: int = 128
     lk_fb_threshold_px: float = 1.0  # forward-backward round-trip tolerance
     lk_min_points: int = 6           # fewer survivors than this = lost
     # association
@@ -103,6 +108,10 @@ class Config:
     max_misses: int = 15             # frames a LOST track's frozen box is kept
     max_unconfirmed: int = 60        # frames a still-tracked track may go unmatched
     duplicate_iou: float = 0.7       # two tracks above this are one face
+    refresh_on_lost: bool = True     # early detection after a lost track (D-017)
+    unconfirmed_interval: int = 3    # early detection while a track is unconfirmed (D-017)
+    scene_cut_corr: float = 0.5      # cut = histogram corr below this ... (D-018)
+    scene_cut_ncc: float = 0.3       # ... and thumbnail NCC below this
     # redaction
     mode: str = "pixelate"           # blur | pixelate | fill
     padding: float = 0.25            # per side; >= 0.207 needed, see section 7
@@ -317,7 +326,12 @@ analyse(video, cfg) -> TrackSet          # per-track {frame: Box}, boxes only
         for each track: box = tracker.update(frame, gray)
                         if box is None: track.lost = True  (box frozen)
                         else: track.box = box
-        if i % detect_interval == 0:
+        if scene_cut(prev_frame, frame):             # D-018
+            end every live track
+        if i % detect_interval == 0 or scene cut
+           or a track was lost on the previous frame                      # D-017
+           or (a track went unmatched at the last detection
+               and i % unconfirmed_interval == 0):                        # D-017
             detections = detector.detect(frame, gray)
             associate(detections, tracks, i)         # section 6
         record track.box into track.history[i] for every live track
@@ -340,8 +354,26 @@ Stream frames in both passes. Never accumulate decoded frames in memory
 Render **replays** the stored boxes and never re-runs detection, so the IDs the
 user toggled are exactly the IDs that get rendered. A manual box drawn on frame
 `f` becomes a new track whose boxes are produced by `propagate(video, f, box,
-cfg)`: the configured tracker runs forward from `f` until it loses the face or
-the clip ends.
+cfg)` in `core/review.py`: the configured tracker runs forward from `f` until
+it loses the face or the clip ends. Two alternatives cover faces the tracker
+cannot follow: hold the box still to an end frame, or interpolate linearly to
+a second keyframe box. Manual boxes are entered as coordinates with a live
+preview (D-015).
+
+**Early detection (D-017).** Scheduled detection every N frames is the
+default, and the detector also runs off schedule when tracking is in doubt:
+on the frame after any tracker loses its face, and every
+`unconfirmed_interval` frames while a tracked face went unmatched at the last
+detection. The second rule is what re-acquires a face that re-emerges from
+behind someone: its track is usually dragged along by the occluder rather
+than lost. A face that *enters* the frame has no track to doubt, so it is
+still only found at the next scheduled detection; that exposure is measured
+(entry segment of the crossing clip).
+
+**Scene cuts (D-018).** A cut ends every live track (logged as a
+`scene_cut` event) and triggers detection on that frame. A cut requires both
+a grey-histogram correlation drop and a drop in the normalised cross-correlation
+of a 32 px thumbnail, so fades and fast pans are not cuts.
 
 **CLI:** analyse, then render with every track selected.
 

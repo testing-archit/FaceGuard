@@ -85,6 +85,22 @@ python cli.py --input clip.mp4 --output out.mp4 --mode pixelate \
 | `--padding` | `0.25` | Expand each box by this fraction of its size, per side |
 | `--keep-audio` | off | Mux the original audio back into the output |
 
+## Evaluation
+
+```bash
+python scripts/fetch_samples.py         # public OpenCV test photos (one-time)
+python scripts/make_synthetic_clip.py   # 20 s clip, exact ground truth
+python scripts/make_crossing_clip.py    # 15 s clip: occlusion, crossing, entry
+python eval/annotate.py images data/samples/my_photo.jpg   # label real media
+python eval/annotate.py video data/samples/my_clip.mp4 --every 5
+python eval/run_experiments.py --config eval/experiments.yaml
+```
+
+The last command regenerates every table in `docs/RESULTS.md` and every plot
+in `eval/out/` (about 10 minutes on an Apple M5; `--runs 1` for a quick check).
+Leak frames, the count of frames in which any face is less than 90% covered,
+is the headline metric: one such frame defeats the tool.
+
 ## A note on how private this actually is
 
 Gaussian blur is the weakest option. Deblurring and face-restoration models can

@@ -75,15 +75,15 @@ the CLI.
 
 ## Week 5 — Evaluation and report (M5)
 
-- [ ] `eval/annotate.py` to label ground-truth boxes
+- [x] `eval/annotate.py` to label ground-truth boxes
 - [ ] Annotate 30–50 images and 3–5 clips (**start this in Week 3**, it is the
       most commonly underestimated task in the whole project)
-- [ ] `eval/metrics.py`: precision, recall, F1 at IoU 0.5; redaction coverage;
+- [x] `eval/metrics.py`: precision, recall, F1 at IoU 0.5; redaction coverage;
       leak-frame count; FPS; ID consistency
-- [ ] `eval/run_experiments.py` ablation sweep
-- [ ] Plots: FPS vs detect-interval; leak frames vs detect-interval; PR curve
-- [ ] `docs/RESULTS.md` filled in
-- [ ] Final report, demo clip, viva prep
+- [x] `eval/run_experiments.py` ablation sweep (E1–E7)
+- [x] Plots: FPS vs detect-interval; leak frames vs detect-interval; PR curve
+- [x] `docs/RESULTS.md` filled in (synthetic data only until real annotations exist)
+- [ ] Final report (draft: `docs/REPORT.md`), demo clip, viva prep (`docs/VIVA.md`)
 
 **Acceptance:** the full results table and all plots regenerate from one command.
 
