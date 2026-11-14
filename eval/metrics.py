@@ -213,17 +213,31 @@ class DetectionCounts:
         return 2 * p * r / (p + r) if p + r else 0.0
 
 
-def count_detections(gts: list[Box], preds: list[Box], iou: float = MATCH_IOU) -> DetectionCounts:
-    n = len(match_boxes(gts, preds, iou))
-    return DetectionCounts(tp=n, fp=len(preds) - n, fn=len(gts) - n)
+def in_ignore(box: Box, ignore: list[Box]) -> bool:
+    """True if a box's centre lies in an ignore region (WIDER FACE convention)."""
+    cx, cy = box.center
+    return any(r.x <= cx < r.x + r.w and r.y <= cy < r.y + r.h for r in ignore)
+
+
+def count_detections(
+    gts: list[Box], preds: list[Box], iou: float = MATCH_IOU, ignore: list[Box] | None = None
+) -> DetectionCounts:
+    """TP/FP/FN after one-to-one matching. Unmatched predictions inside an
+    ignore region (faces too ambiguous to label) are not counted at all."""
+    pairs = match_boxes(gts, preds, iou)
+    matched = {pi for _, pi in pairs}
+    fp = sum(1 for k, p in enumerate(preds) if k not in matched and not (ignore and in_ignore(p, ignore)))
+    return DetectionCounts(tp=len(pairs), fp=fp, fn=len(gts) - len(pairs))
 
 
 def pr_curve(
-    images: list[tuple[list[Box], list[tuple[Box, float]]]], iou: float = MATCH_IOU
+    images: list[tuple], iou: float = MATCH_IOU
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """Precision-recall curve over a set of images, VOC style.
 
-    `images` is [(ground-truth boxes, [(predicted box, score), ...]), ...].
+    `images` is [(ground-truth boxes, [(predicted box, score), ...], ignore boxes?), ...];
+    the optional third element lists ignore regions, whose unmatched
+    detections are dropped from the ranking.
     Detections from all images are ranked by score; each is a true positive
     if it overlaps a not-yet-claimed ground-truth box in its image at
     IoU >= `iou`. Matching in score order means the matches at threshold t
@@ -232,14 +246,16 @@ def pr_curve(
     entry k is the operating point "threshold = scores[k]".
     """
     ranked = sorted(
-        ((score, img, box) for img, (_, preds) in enumerate(images) for box, score in preds),
+        ((score, img, box) for img, entry in enumerate(images) for box, score in entry[1]),
         key=lambda r: -r[0],
     )
-    n_gt = sum(len(g) for g, _ in images)
+    n_gt = sum(len(entry[0]) for entry in images)
     claimed: list[set[int]] = [set() for _ in images]
+    keep = np.ones(len(ranked), bool)
     tp = np.zeros(len(ranked))
     for k, (_, img, box) in enumerate(ranked):
         gts = images[img][0]
+        ignore = images[img][2] if len(images[img]) > 2 else None
         best, best_iou = None, iou
         for gi, g in enumerate(gts):
             v = g.iou(box)
@@ -248,6 +264,10 @@ def pr_curve(
         if best is not None:
             claimed[img].add(best)
             tp[k] = 1
+        elif ignore and in_ignore(box, ignore):
+            keep[k] = False
+    ranked = [r for r, kk in zip(ranked, keep) if kk]
+    tp = tp[keep]
     ctp = np.cumsum(tp)
     precision = ctp / np.arange(1, len(ranked) + 1) if ranked else np.zeros(0)
     recall = ctp / n_gt if n_gt else np.zeros(len(ranked))

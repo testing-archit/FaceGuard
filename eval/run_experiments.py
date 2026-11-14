@@ -108,6 +108,7 @@ class ImageItem:
     gts: list[Box]
     conditions: list[str] = field(default_factory=list)
     source: str = "annotated"
+    ignore: list[Box] = field(default_factory=list)  # regions too ambiguous to label
 
 
 def resolve(truth_path: Path, file: str) -> Path:
@@ -155,6 +156,7 @@ def load_images(spec: dict) -> list[ImageItem]:
                 name=Path(entry["file"]).name, image=img,
                 gts=[Box(*f["box"]) for f in entry["faces"]],
                 conditions=entry.get("conditions", []),
+                ignore=[Box(*b) for b in entry.get("ignore", [])],
             ))
     st = spec.get("synthetic_stills")
     if st and (ROOT / st["truth"]).exists():
@@ -299,7 +301,7 @@ def e1_images(images: list[ImageItem], base: Config, detectors: list[str]) -> di
             t0 = time.perf_counter()
             preds = [d.box for d in det.detect(item.image)]
             secs += time.perf_counter() - t0
-            total.add(count_detections(item.gts, preds))
+            total.add(count_detections(item.gts, preds, ignore=item.ignore))
             h, w = item.image.shape[:2]
             for g in item.gts:
                 c = coverage(g, preds, w, h, cfg)
@@ -328,14 +330,13 @@ def e1_images(images: list[ImageItem], base: Config, detectors: list[str]) -> di
 def e4_pr(images: list[ImageItem], base: Config, thresholds: list[float]) -> dict:
     """E4: YuNet confidence sweep. One low-threshold pass gives the whole curve."""
     det = make_detector(replace(base, detector="yunet", conf_threshold=PR_FLOOR))
-    per_image = [(item.gts, [(d.box, d.score) for d in det.detect(item.image)]) for item in images]
+    per_image = [(item.gts, [(d.box, d.score) for d in det.detect(item.image)], item.ignore) for item in images]
     scores, prec, rec, ap = pr_curve(per_image)
     table = []
     for t in thresholds:
-        dets = [(g, [b for b, s in preds if s >= t]) for g, preds in per_image]
         c = DetectionCounts()
-        for g, p in dets:
-            c.add(count_detections(g, p))
+        for g, preds, ign in per_image:
+            c.add(count_detections(g, [b for b, s in preds if s >= t], ignore=ign))
         table.append({"threshold": t, "precision": round(c.precision, 4), "recall": round(c.recall, 4),
                       "f1": round(c.f1, 4), "fp": c.fp, "fn": c.fn})
     return {"ap": round(ap, 4), "table": table,

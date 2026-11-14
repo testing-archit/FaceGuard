@@ -94,3 +94,14 @@ def test_size_bucket():
     assert size_bucket(Box(0, 0, 20, 20)) == "small"
     assert size_bucket(Box(0, 0, 60, 60)) == "medium"
     assert size_bucket(Box(0, 0, 120, 120)) == "large"
+
+
+def test_ignore_regions_drop_unmatched_detections():
+    from eval.metrics import count_detections, pr_curve
+    g = [Box(0, 0, 10, 10)]
+    p = [Box(0, 0, 10, 10), Box(100, 100, 10, 10), Box(300, 300, 10, 10)]
+    ign = [Box(90, 90, 40, 40)]
+    c = count_detections(g, p, ignore=ign)
+    assert (c.tp, c.fp, c.fn) == (1, 1, 0)
+    _, prec, rec, _ = pr_curve([(g, [(b, 0.9) for b in p], ign)])
+    assert len(prec) == 2 and rec[-1] == 1.0

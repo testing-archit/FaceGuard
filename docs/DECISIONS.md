@@ -294,3 +294,30 @@ losses happen (KCF in the rotation segment, both clips' whip pans) the face
 changes direction, so the extrapolation overshoots. A negative result: it
 stays available for footage with steady motion, such as people walking past
 a static camera, where it has not been tested.
+
+## D-022 — Tiled small-face detection is offered but off by default
+**Date:** 2026-11-14
+**Context:** YuNet's finest feature map has an 8 px stride, so faces of
+roughly 10-15 px are below its reliable range (TASKS stretch goal).
+**Decision:** `tile_grid = n` also runs the detector on n x n overlapping
+tiles upscaled 2x and merges all detections with NMS (IoU 0.3). Exposed as
+`--tiles N` and as "Search for small faces" in the UI. Off by default.
+**Trade-off:** About 5x the detection time for a 2 x 2 grid.
+**Evidence:** Seven annotated public photos (76 faces, see
+`data/ground_truth.json` and its provenance note). YuNet alone: 76/76 faces,
+0 false positives, 7.3 ms per image. With 2 x 2 tiles: 76/76, **1 false
+positive** (a textured background patch in rehg-thanksgiving), 34 ms per
+image. class57's 57 faces (about 25-40 px wide) are all found without
+tiling. No annotated image yet has faces small enough for tiling to help,
+so the option stays off until one does.
+
+## D-024 — Confidence threshold 0.6 confirmed on real photos
+**Date:** 2026-11-14
+**Context:** The synthetic stills contain no face-like clutter, so they could
+not show what a lower threshold costs (E4, first run).
+**Evidence:** On the seven public photos: threshold 0.3 → recall 1.000,
+2 false positives; 0.5 → 1.000, 1; **0.6 → 1.000, 0**; 0.7 → 1.000, 0;
+0.9 → 0.803, 0. 0.6 is the lowest threshold with no false positives, so a
+lower value buys nothing on this set. Caveat: the boxes were proposed by
+YuNet and verified by an AI annotator, and the photos are easy (frontal,
+well separated), so a harder set may move the optimum.
