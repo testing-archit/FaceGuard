@@ -129,3 +129,42 @@ def test_scene_cut_retires_and_logs():
     assert [(e.kind, e.frame) for e in tm.events] == [("scene_cut", 5), ("scene_cut", 5)]
     tm.step(5, FRAME, GRAY, [det(10, 10)])
     assert [t.id for t in tm.live] == [3]  # IDs are never reused across a cut
+
+
+class ScriptedTracker:
+    """Moves right 5 px per frame for `follow` updates, then reports the face lost."""
+
+    def __init__(self, follow=3):
+        self.follow, self.n, self.box = follow, 0, None
+
+    def init(self, frame, gray, box):
+        self.box, self.n = box, 0
+
+    def update(self, frame, gray):
+        self.n += 1
+        if self.n > self.follow:
+            return None
+        self.box = Box(self.box.x + 5, self.box.y, self.box.w, self.box.h)
+        return self.box
+
+
+def test_coasting_keeps_moving_and_grows_mask():
+    cfg = Config(tracker="lk", coast=True, coast_decay=1.0, coast_grow=0.1, coast_max_scale=1.5,
+                 velocity_smoothing=1.0)
+    tm = TrackManager(cfg, lambda: ScriptedTracker(follow=3))
+    tm.step(0, FRAME, GRAY, [det(50, 100)])
+    for i in range(1, 9):
+        tm.step(i, FRAME, GRAY, None)
+    t = tm.live[0]
+    assert t.flags[4] == "lost"
+    assert t.box.x == 50 + 5 * 8  # kept moving at 5 px/frame after frame 3
+    assert (t.box.w, t.box.h) == (40, 40)  # matching box keeps its size
+    assert t.history[4].w == 44 and t.history[8].w == 60  # mask grows 10%/frame, capped at 1.5x
+
+
+def test_without_coasting_lost_box_freezes():
+    tm = TrackManager(Config(tracker="lk"), lambda: ScriptedTracker(follow=3))
+    tm.step(0, FRAME, GRAY, [det(50, 100)])
+    for i in range(1, 9):
+        tm.step(i, FRAME, GRAY, None)
+    assert tm.live[0].history[8] == Box(65, 100, 40, 40)

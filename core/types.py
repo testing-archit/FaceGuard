@@ -140,6 +140,12 @@ class Config:
     max_misses: int = 15  # frames a LOST track (frozen box) is kept before deletion
     max_unconfirmed: int = 60  # frames a still-tracked track may go without a detector match
     duplicate_iou: float = 0.7  # two tracks above this are the same face
+    # coasting (D-023): a LOST track keeps moving at its last velocity, and its mask grows
+    coast: bool = False  # off = the lost box stays frozen at its last position
+    coast_decay: float = 0.9  # per-frame velocity decay while coasting (1 = constant velocity)
+    coast_grow: float = 0.04  # per-frame growth of the mask, fraction of box size
+    coast_max_scale: float = 1.8  # mask size cap while coasting, multiple of the box size
+    velocity_smoothing: float = 0.5  # EMA weight of the newest per-frame displacement
     # early detection (D-017): run the detector on the next frame, off schedule, when
     refresh_on_lost: bool = True  # ... a tracker has lost its face
     unconfirmed_interval: int = 3  # ... every N frames while a tracked face went unmatched by the

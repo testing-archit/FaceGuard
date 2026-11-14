@@ -76,6 +76,7 @@ class TrackManager:
         self._trackers: dict[int, Tracker] = {}
         self._next_id = 1
         self._last_detection: int | None = None
+        self._velocity: dict[int, tuple[float, float]] = {}
 
     def step(
         self, i: int, frame: np.ndarray, gray: np.ndarray, detections: list[Detection] | None
@@ -87,8 +88,11 @@ class TrackManager:
             box = self._trackers[t.id].update(frame, gray)
             if box is None:
                 if not t.lost:
-                    t.lost, t.lost_since = True, i  # box stays frozen at its last position
+                    t.lost, t.lost_since = True, i  # box frozen at its last position ...
+                if self._cfg.coast and self._follows_motion:
+                    t.box = self._coast(t)  # ... unless coasting carries it on
             elif not t.lost:
+                self._update_velocity(t, box)
                 t.box = box
 
         matched_ids: set[int] = set()
@@ -101,7 +105,7 @@ class TrackManager:
         else:
             present = [t for t in self.live if t.id in matched_ids]
         for t in present:
-            t.history[i] = t.box
+            t.history[i] = self._mask_box(t, i, frame.shape)
             if t.lost:
                 t.flags[i] = FLAG_LOST
             elif self._last_detection is not None and t.last_seen_frame < self._last_detection:
@@ -195,6 +199,40 @@ class TrackManager:
                     dropped.add(b.id)
                     self.events.append(IdEvent(frame=i, kind="duplicate", kept=a.id, dropped=b.id))
         return dropped
+
+    # --- coasting (D-023) ---------------------------------------------------
+
+    def _update_velocity(self, t: Track, box: Box) -> None:
+        """Exponential moving average of the box centre's per-frame displacement."""
+        (cx0, cy0), (cx1, cy1) = t.box.center, box.center
+        a = self._cfg.velocity_smoothing
+        vx, vy = self._velocity.get(t.id, (cx1 - cx0, cy1 - cy0))
+        self._velocity[t.id] = (a * (cx1 - cx0) + (1 - a) * vx, a * (cy1 - cy0) + (1 - a) * vy)
+
+    def _coast(self, t: Track) -> Box:
+        """Constant-velocity prediction with decay: where the face probably went.
+
+        The box keeps its size so it can still be matched by IoU when the
+        detector re-finds the face; only the recorded mask grows (`_mask_box`).
+        """
+        vx, vy = self._velocity.get(t.id, (0.0, 0.0))
+        d = self._cfg.coast_decay
+        self._velocity[t.id] = (vx * d, vy * d)
+        return Box.from_xywh(t.box.x + vx, t.box.y + vy, t.box.w, t.box.h)
+
+    def _mask_box(self, t: Track, i: int, shape: tuple[int, ...]) -> Box:
+        """Box recorded for redaction on frame i: grown while a coasting track is lost.
+
+        Uncertainty about a lost face's position increases every frame, so
+        the mask grows with it, up to `coast_max_scale` times the box.
+        """
+        cfg = self._cfg
+        if not (cfg.coast and t.lost and self._follows_motion):
+            return t.box
+        scale = min(1.0 + cfg.coast_grow * (i - t.lost_since + 1), cfg.coast_max_scale)
+        cx, cy = t.box.center
+        w, h = t.box.w * scale, t.box.h * scale
+        return Box.from_xywh(cx - w / 2, cy - h / 2, w, h).clip(shape[1], shape[0])
 
     def _retire(self, t: Track) -> None:
         self.live.remove(t)

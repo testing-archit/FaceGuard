@@ -277,3 +277,20 @@ light and dark palettes, Streamlit's locally served Source Sans) plus
 exercise; their Python side (what a click or drag does to state) is tested by
 setting the same session state directly, and the JS was checked by hand in
 Chrome.
+
+## D-023 — Coasting lost tracks is offered but off by default
+**Date:** 2026-11-14
+**Context:** When a tracker loses a face, its box is frozen (FR-15). If the
+person keeps moving, the frozen box falls behind and the face leaks.
+**Decision:** `coast=True` keeps a lost track moving at its last velocity
+(EMA of per-frame centre displacement, decaying 10% per frame) and grows the
+recorded mask 4% per frame up to 1.8x, while the box used for IoU matching
+keeps its size so the detector can still re-anchor it. Off by default.
+**Trade-off:** Extrapolation assumes motion continues in a straight line.
+**Evidence:** Interval 10, freeze / coast leak frames. synthetic_er: LK 0 / 0,
+CSRT 3 / 3, KCF **10 / 23** (rotation 9 → 23). synthetic_cross: LK 8 / 8,
+CSRT 8 / 8, KCF 13 / 13. LK never reports a loss on these clips, and where
+losses happen (KCF in the rotation segment, both clips' whip pans) the face
+changes direction, so the extrapolation overshoots. A negative result: it
+stays available for footage with steady motion, such as people walking past
+a static camera, where it has not been tested.
