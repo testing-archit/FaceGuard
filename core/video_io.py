@@ -56,6 +56,19 @@ class VideoReader:
             frame_count=int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT)),
         )
 
+    def seek(self, index: int) -> bool:
+        """Position the reader so the next frame yielded is `index`.
+
+        Returns False if `index` is outside the clip. Container seeking lands
+        on the nearest keyframe and decodes forward, so it is exact for the
+        H.264/mp4v files used here but slower than sequential reading.
+        """
+        if index < 0 or (self.info.frame_count > 0 and index >= self.info.frame_count):
+            return False
+        if index == 0:
+            return True
+        return bool(self._cap.set(cv2.CAP_PROP_POS_FRAMES, index))
+
     def __iter__(self) -> Iterator[np.ndarray]:
         while True:
             ok, frame = self._cap.read()

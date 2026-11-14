@@ -51,8 +51,21 @@ reinstall only the contrib wheel.
 streamlit run ui/app.py
 ```
 
-Upload a file, wait for detection, untick any face you want left visible,
-choose a redaction mode, export.
+Opens on `http://localhost:8501`, bound to this machine with Streamlit usage
+statistics disabled (`.streamlit/config.toml`).
+
+1. Upload a photo or video and press **Detect faces**.
+2. Review: each face gets a number on the left preview; the right preview
+   shows the redacted result. For video, scrub with the frame slider.
+3. Untick **Redact** to leave a person visible, tick **Delete** to remove a
+   false positive. The choice follows that person through the whole clip.
+4. Missed a face? Toggle **Add a manual box**, enter its position (drawn
+   live in magenta), and choose whether the tracker follows it, it holds
+   still to an end frame, or it moves linearly to an end-frame box.
+5. **Render and export**, check the result, download. Audio is dropped
+   unless you tick **Keep original audio**.
+
+**Reset session** deletes the upload and every preview and export.
 
 ### Command line
 

@@ -87,6 +87,7 @@ class Track:
     last_seen_frame: int = 0  # last frame a detection matched this track
     lost: bool = False  # tracker returned None; box is frozen in place
     lost_since: int = 0  # frame the tracker lost it (valid while lost)
+    score: float | None = None  # detector confidence, images only (shown in the preview)
     history: dict[int, Box] = field(default_factory=dict)
 
 

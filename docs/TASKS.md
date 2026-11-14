@@ -55,15 +55,15 @@ it is explained; the criterion must not force an outcome.
 
 ## Week 4 — UI and correction (M4)
 
-- [ ] `ui/app.py`: upload, process, preview
-- [ ] Numbered overlay boxes per track
-- [ ] Per-track redact toggle (selective redaction)
-- [ ] Manual box drawing, stored as a `source="manual"` track and propagated by
+- [x] `ui/app.py`: upload, process, preview
+- [x] Numbered overlay boxes per track
+- [x] Per-track redact toggle (selective redaction)
+- [x] Manual box drawing (coordinate entry with live preview, D-015), stored as a `source="manual"` track and propagated by
       the tracker like a detection
-- [ ] Delete a false-positive track
-- [ ] Mode, interval, padding and strength controls
-- [ ] Frame scrubber for video preview
-- [ ] Privacy hint in the UI: fill is strongest, blur is weakest
+- [x] Delete a false-positive track
+- [x] Mode, interval, padding and strength controls
+- [x] Frame scrubber for video preview
+- [x] Privacy hint in the UI: fill is strongest, blur is weakest
 
 **Acceptance:** a user can untick person 2 of 4, delete one false positive,
 draw one manual box over a missed face, preview, and export, without touching

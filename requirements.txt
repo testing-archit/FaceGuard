@@ -1,6 +1,6 @@
 opencv-contrib-python>=4.10,<6   # contrib build: CSRT/KCF trackers
 numpy>=1.24
-streamlit>=1.30                  # UI
+streamlit>=1.46                  # UI; width="stretch" API
 pyyaml>=6.0                      # eval/experiments.yaml
 matplotlib>=3.7                  # eval plots
 pytest>=7.4

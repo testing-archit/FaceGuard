@@ -167,3 +167,27 @@ fixed floor, not just a fraction of a ~45 px face.
 FPS / leak frames / tracks: full frame 96.8 / 0 / 6; 48 px 216.2 / 15 / 9;
 96 px 182.7 / 3 / 7; **128 px 162.4 / 0 / 6**. End to end with redaction and
 encode: 121.5 FPS vs 76.7 per-frame (docs/RESULTS.md, M3).
+
+## D-015 — Manual boxes by coordinate entry with live preview, not a drawing canvas
+**Date:** 2026-11-14
+**Context:** FR-24 needs the user to place a box over a missed face.
+Streamlit has no built-in way to draw on an image.
+**Options:** `streamlit-drawable-canvas` (third-party component, unmaintained
+for recent Streamlit versions); Plotly box-select (adds plotly); number
+inputs with the draft box drawn live on the preview.
+**Decision:** Number inputs (x, y, width, height), drawn in magenta on the
+preview as they change. In video the box is then followed by the configured
+tracker from the current frame (as FR-24 requires), held still to an end
+frame, or interpolated linearly to a second keyframe box.
+**Trade-off:** Slower to place than dragging a rectangle. No new dependency,
+and the result is pixel-exact and testable headless.
+
+## D-016 — Track editing happens on the stored analysis, never by re-detecting
+**Date:** 2026-11-14
+**Context:** Changing the redaction mode, padding or strength must not undo
+the user's ticks, deletions and manual boxes.
+**Decision:** The UI splits settings in two. Redaction settings only affect
+rendering and apply instantly. Detection settings (detector, threshold,
+tracker, interval) mark the analysis stale and need an explicit re-run, which
+warns that it discards manual edits.
+**Trade-off:** One extra click after changing detection settings.

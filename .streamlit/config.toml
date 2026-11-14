@@ -1,0 +1,12 @@
+# Local-only operation (SPEC FR-9 / NFR-3): bind to this machine, no telemetry.
+[server]
+address = "localhost"
+headless = true
+maxUploadSize = 500  # MB; FR-4 warns on long or large videos rather than rejecting
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[client]
+toolbarMode = "minimal"
