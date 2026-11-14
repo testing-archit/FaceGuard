@@ -121,6 +121,8 @@ class Config:
     lk_fb_threshold_px: float = 1.0  # forward-backward round-trip tolerance
     lk_min_points: int = 6  # fewer surviving points than this = track lost
     lk_reseed_below: int = 12  # re-seed corners in the box below this many points
+    lk_search_frac: float = 1.0  # LK search window margin, as a fraction of box size
+    lk_search_min_px: int = 128  # px added to the margin; bounds trackable motion per frame
 
     # association
     iou_threshold: float = 0.3  # min IoU to match a detection to a track

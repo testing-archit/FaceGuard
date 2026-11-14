@@ -39,3 +39,50 @@ Observations:
   assumption that classical detectors are the "fast" option.
 - Because YuNet is already fast, the main argument for tracking in M3 is
   covering detector misses (leak frames), not throughput.
+
+## M3 — detect every 10 frames and track in between
+
+Same clip, machine and FPS definition as M2 (`process_video`, mode
+`pixelate`, YuNet, 3 runs). Leak frames are frames containing at least one
+ground-truth face with mask coverage < 0.90 (`eval/metrics.py`), counted
+against the synthetic clip's exact per-frame ground truth (600 frames, all
+with faces). Coverage is per face-frame.
+
+| Config | FPS (3 runs) | Mean ± std | Detector calls | Leak frames | Mean coverage | Tracks (6 faces) |
+|---|---|---|---|---|---|---|
+| per-frame (`--tracker off`) | 76.9, 76.5, 76.8 | 76.7 ± 0.2 | 600 | **43** | 0.970 | 174 |
+| interval 10, hold box (`none`) | 257.6, 240.1, 257.1 | 251.6 ± 9.9 | 60 | 232 | 0.809 | 155 |
+| interval 10, **LK** | 118.8, 122.4, 123.2 | **121.5 ± 2.4** | 60 | **0** | 1.000 | 6 |
+| interval 10, CSRT | 21.3, 21.3, 21.3 | 21.3 ± 0.0 | 60 | 3 | 0.999 | 7 |
+| interval 10, KCF | 72.4, 73.7, 74.0 | 73.4 ± 0.9 | 60 | 77 | 0.940 | 49 |
+
+Leak frames by segment:
+
+| Config | static | slow pan | rotation | fast pan | low light | small faces |
+|---|---|---|---|---|---|---|
+| per-frame | 0 | 0 | 43 | 0 | 0 | 0 |
+| hold box | 0 | 65 | 100 | 37 | 0 | 30 |
+| LK | 0 | 0 | 0 | 0 | 0 | 0 |
+| CSRT | 0 | 0 | 0 | 3 | 0 | 0 |
+| KCF | 0 | 0 | 41 | 36 | 0 | 0 |
+
+Observations:
+
+- **Acceptance met.** LK at interval 10 runs at **1.58x** the per-frame
+  baseline (121.5 vs 76.7 FPS) while leak frames fall from **43 to 0**.
+- Leak frames go *down* with tracking although the detector runs 10x less
+  often. All 43 per-frame leaks are in the rotation segment, where YuNet
+  misses faces rolled ~40°; per-frame detection has no memory, so a missed
+  frame is an exposed frame. LK keeps following those faces (D-012).
+- Per-frame detection fragments identity: 174 track IDs for 6 people, because
+  every miss ends a track. LK keeps exactly 6.
+- Holding the box still (`none`) is the fastest and the worst: 232 leak
+  frames, because the box stays behind while the face moves. Speed alone is
+  not the reason to track; motion is.
+- KCF has fixed scale and loses the rolled and fast-moving faces. CSRT is
+  nearly as good as LK but 5.7x slower.
+- The first LK implementation ran at 66.5 FPS, *slower* than the baseline:
+  each track built two full-frame pyramids per frame. Restricting LK and
+  corner seeding to a search window around each face fixed it (D-014).
+- All numbers are on one synthetic clip; E2/E3 in Week 5 repeat them on the
+  annotated real clips.

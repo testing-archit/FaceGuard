@@ -37,14 +37,14 @@ plays correctly. Flicker is expected at this stage — that is the point.
 
 ## Week 3 — Tracking and association (M3)
 
-- [ ] `core/tracking.py`: `LKTracker` with Shi-Tomasi seeding, pyramidal LK,
+- [x] `core/tracking.py`: `LKTracker` with Shi-Tomasi seeding, pyramidal LK,
       forward-backward error check, median translation and scale
-- [ ] `CSRTTracker`, `KCFTracker` wrappers with the version-safe constructor
-- [ ] `core/association.py`: IoU matching, track creation, grace period,
+- [x] `CSRTTracker`, `KCFTracker` wrappers with the version-safe constructor
+- [x] `core/association.py`: IoU matching, track creation, grace period,
       ID-switch logging
-- [ ] Pipeline runs detection every N frames and tracks in between
-- [ ] Detection re-anchors matched tracks (drift reset)
-- [ ] Measure FPS and leak frames against Week 2 baseline
+- [x] Pipeline runs detection every N frames and tracks in between
+- [x] Detection re-anchors matched tracks (drift reset)
+- [x] Measure FPS and leak frames against Week 2 baseline
 
 **Acceptance:** same clip at `--detect-interval 10 --tracker lk` has **higher
 FPS** than the Week 2 baseline, and leak frames are measured for both and

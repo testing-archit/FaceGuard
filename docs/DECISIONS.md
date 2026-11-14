@@ -144,4 +144,26 @@ window 31 changes nothing. The coarsest level of a 4-level pyramid sees a
 60 px motion as under 4 px, inside LK's small-motion assumption. Tuned on the
 synthetic clip, so it must be confirmed on the real clips (E2/E3).
 
-## D-014 — <next>
+
+
+## D-014 — LK runs on a search window around each face
+**Date:** 2026-11-14
+**Context:** The first M3 measurement had LK at interval 10 at 66.5 FPS,
+below the 76.7 FPS per-frame baseline. Profiling: 6.6 s of 7.4 s was tracker
+time. Every `calcOpticalFlowPyrLK` call builds pyramids of both full frames,
+so 6 faces with a forward-backward check meant 24 full-frame pyramids per
+frame, and corner re-seeding computed the corner response over the whole
+frame under a mask.
+**Options:** share one pyramid per frame (OpenCV 5's Python binding rejects
+prebuilt pyramids); batch all tracks into one LK call (breaks the per-track
+`Tracker` interface); crop both frames to the box plus a margin.
+**Decision:** Crop to the box grown by `lk_search_frac` (1.0) x box size +
+`lk_search_min_px` (128) on each side; seed corners on the box crop with an
+8 px context border. Points that leave the crop are discarded.
+**Trade-off:** The margin is a hard cap on per-frame motion. A small crop
+also has fewer usable pyramid levels, which is why the margin needs a large
+fixed floor, not just a fraction of a ~45 px face.
+**Evidence:** Synthetic clip, interval 10 (analyse only). Margin floor /
+FPS / leak frames / tracks: full frame 96.8 / 0 / 6; 48 px 216.2 / 15 / 9;
+96 px 182.7 / 3 / 7; **128 px 162.4 / 0 / 6**. End to end with redaction and
+encode: 121.5 FPS vs 76.7 per-frame (docs/RESULTS.md, M3).
