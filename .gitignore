@@ -5,7 +5,7 @@ __pycache__/
 .pytest_cache/
 
 # Outputs
-out/
+/out/
 *.silent.mp4
 
 # Local media: real clips contain identifiable people, never commit them
