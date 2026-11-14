@@ -53,7 +53,8 @@ from core.video_io import VideoReader, limit_warnings  # noqa: E402
 from ui.components import face_canvas, timeline  # noqa: E402
 
 # Settings that change what analysis finds; changing them needs a re-run.
-ANALYSIS_KEYS = ("detector", "conf_threshold", "tracker", "detect_interval", "smooth_window")
+ANALYSIS_KEYS = ("detector", "conf_threshold", "tile_grid", "tracker", "detect_interval", "smooth_window")
+SMALL_FACE_TILES = 2  # tile grid used by the "Search for small faces" switch
 TRACKERS = ("lk", "csrt", "kcf", "none", "off")
 TRACKER_LABELS = {
     "lk": "Lucas-Kanade optical flow",
@@ -206,6 +207,9 @@ def sidebar() -> Config:
         conf = st.slider("Confidence threshold", 0.1, 0.95, step=0.05, key="set_conf",
                          disabled=detector != "yunet",
                          help="Lower finds more faces and more false positives. A missed face is worse.")
+        small = st.toggle("Search for small faces", value=False,
+                          help="Also scans enlarged sections of the image, for crowds and distant people. "
+                          "About 5x slower; best for photos.")
 
         section("Video")
         tracker = st.selectbox("Tracking", TRACKERS, format_func=TRACKER_LABELS.get)
@@ -226,6 +230,7 @@ def sidebar() -> Config:
     return replace(
         d, mode=mode, mask_shape=shape, padding=padding, blur_strength=blur_strength,
         pixel_blocks=pixel_blocks, fill_color=fill, detector=detector, conf_threshold=conf,
+        tile_grid=SMALL_FACE_TILES if small else 0,
         tracker=tracker, detect_interval=interval, smooth_window=smooth, keep_audio=keep_audio,
     )
 

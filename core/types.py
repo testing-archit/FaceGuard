@@ -112,6 +112,10 @@ class Config:
     haar_scale_factor: float = 1.1  # image pyramid step for the cascade
     haar_min_neighbors: int = 5  # overlapping hits needed to accept a face
     min_face_px: int = 24  # Haar minSize; also the "small face" bound
+    tile_grid: int = 0  # 0 = off; n = also detect on n x n overlapping, upscaled tiles (D-022)
+    tile_overlap: float = 0.25  # tile overlap, fraction of tile size, so no face is cut by every tile
+    tile_scale: float = 2.0  # upscale factor for tiles: a 12 px face is seen at 24 px
+    tile_nms_iou: float = 0.3  # merge duplicates from the full frame and the tiles above this IoU
 
     # tracking
     # lk | csrt | kcf: propagate boxes between detections
@@ -175,5 +179,7 @@ class Config:
             raise ValueError("padding must be >= 0")
         if self.mask_shape not in SHAPES:
             raise ValueError(f"mask_shape must be one of {SHAPES}, got {self.mask_shape!r}")
+        if self.tile_grid < 0 or self.tile_scale < 1:
+            raise ValueError("tile_grid must be >= 0 and tile_scale >= 1")
         if self.smooth_window < 1:
             raise ValueError("smooth_window must be >= 1")

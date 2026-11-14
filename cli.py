@@ -36,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--detect-interval", type=int, default=d.detect_interval, help="run the detector every N frames")
     p.add_argument("--conf", type=float, default=d.conf_threshold, help="detection confidence threshold")
     p.add_argument("--padding", type=float, default=d.padding, help="box growth per side, as a fraction of box size")
+    p.add_argument("--tiles", type=int, default=d.tile_grid, metavar="N",
+                   help="also detect on N x N upscaled tiles to find small faces (0 = off; slower)")
     p.add_argument("--shape", choices=SHAPES, default=d.mask_shape,
                    help="mask shape: soft ellipse, or rect to hide the whole padded box")
     p.add_argument("--smooth", type=int, default=d.smooth_window, metavar="FRAMES",
@@ -54,6 +56,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         conf_threshold=args.conf,
         padding=args.padding,
         mask_shape=args.shape,
+        tile_grid=args.tiles,
         smooth_window=args.smooth,
         keep_audio=args.keep_audio,
     )

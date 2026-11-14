@@ -111,10 +111,68 @@ class HaarDetector:
         return [Detection(box=Box(*map(int, f)), score=1.0) for f in faces]
 
 
+def tile_grid(w: int, h: int, n: int, overlap: float) -> list[tuple[int, int, int, int]]:
+    """n x n tiles covering a w x h frame, each grown by `overlap` of its size.
+
+    Neighbouring tiles overlap, so a face cut in half by one tile boundary is
+    whole in the next tile. Returns (x, y, w, h) per tile, clipped to the frame.
+    """
+    tw, th = w / n, h / n
+    ox, oy = tw * overlap / 2, th * overlap / 2
+    tiles = []
+    for r in range(n):
+        for c in range(n):
+            x0, y0 = max(0, int(c * tw - ox)), max(0, int(r * th - oy))
+            x1, y1 = min(w, int((c + 1) * tw + ox)), min(h, int((r + 1) * th + oy))
+            tiles.append((x0, y0, x1 - x0, y1 - y0))
+    return tiles
+
+
+def nms(dets: list[Detection], iou: float) -> list[Detection]:
+    """Greedy non-maximum suppression: keep the highest score, drop its overlaps."""
+    keep: list[Detection] = []
+    for d in sorted(dets, key=lambda d: -d.score):
+        if all(d.box.iou(k.box) <= iou for k in keep):
+            keep.append(d)
+    return keep
+
+
+class TiledDetector:
+    """Runs a detector on the full frame and on upscaled overlapping tiles.
+
+    Detectors have a smallest face they can see: YuNet's finest feature map
+    has a stride of 8 px, so faces of ~10-15 px are below its reliable range.
+    Upscaling a tile by `tile_scale` makes those faces proportionally larger.
+    Detections from all passes are mapped back to frame coordinates and
+    merged by non-maximum suppression. Cost grows roughly with
+    1 + tile_scale^2 * (1 + overlap)^2, so this is meant for photos and for
+    crowds, not as a video default.
+    """
+
+    def __init__(self, base: Detector, cfg: Config) -> None:
+        self._base = base
+        self._cfg = cfg
+
+    def detect(self, frame: np.ndarray, gray: np.ndarray | None = None) -> list[Detection]:
+        cfg = self._cfg
+        dets = list(self._base.detect(frame, gray))
+        h, w = frame.shape[:2]
+        s = cfg.tile_scale
+        for x, y, tw, th in tile_grid(w, h, cfg.tile_grid, cfg.tile_overlap):
+            tile = cv2.resize(frame[y : y + th, x : x + tw], None, fx=s, fy=s, interpolation=cv2.INTER_CUBIC)
+            for d in self._base.detect(tile):
+                b = d.box
+                lm = None if d.landmarks is None else d.landmarks / s + np.array([x, y])
+                dets.append(Detection(Box.from_xywh(x + b.x / s, y + b.y / s, b.w / s, b.h / s), d.score, lm))
+        return nms(dets, cfg.tile_nms_iou)
+
+
 def make_detector(cfg: Config) -> Detector:
-    """Build the detector named by `cfg.detector`."""
+    """Build the detector named by `cfg.detector`, tiled if `cfg.tile_grid` > 0."""
     if cfg.detector == "yunet":
-        return YuNetDetector(cfg)
-    if cfg.detector == "haar":
-        return HaarDetector(cfg)
-    raise ValueError(f"Unknown detector {cfg.detector!r}")
+        base: Detector = YuNetDetector(cfg)
+    elif cfg.detector == "haar":
+        base = HaarDetector(cfg)
+    else:
+        raise ValueError(f"Unknown detector {cfg.detector!r}")
+    return TiledDetector(base, cfg) if cfg.tile_grid > 0 else base
