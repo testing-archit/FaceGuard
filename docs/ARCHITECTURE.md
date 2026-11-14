@@ -25,9 +25,12 @@ faceguard/
 │   ├── redact.py               # blur / pixelate / fill, mask building
 │   ├── video_io.py             # frame reader, writer, ffmpeg audio mux
 │   ├── pipeline.py             # orchestration, early detection, scene cuts
-│   └── review.py               # overlays, manual tracks, propagation, session files
+│   ├── review.py               # overlays, manual tracks, propagation, thumbnails, log
+│   └── smoothing.py            # zero-phase box smoothing (off by default, D-019)
 ├── ui/
-│   └── app.py                  # Streamlit; no CV logic lives here
+│   ├── app.py                  # Streamlit; no CV logic lives here
+│   ├── components.py           # canvas (click/drag) and timeline (click to seek)
+│   └── style.css               # visual design
 ├── .streamlit/config.toml      # localhost only, usage statistics off
 ├── eval/
 │   ├── annotate.py             # manual ground-truth annotation helper

@@ -104,3 +104,43 @@ def test_job_dirs_and_stale_cleanup(tmp_path):
     d2 = new_job_dir(tmp_path)
     remove_job_dir(d2)
     assert not d2.exists()
+
+
+def test_runs_stops_and_stepping():
+    from core.review import flag_runs, frame_runs, review_stops, step_to
+    from core.types import Track
+
+    assert frame_runs([1, 2, 3, 7, 8, 10]) == [(1, 3), (7, 8), (10, 10)]
+    t = Track(id=1, box=Box(0, 0, 1, 1), flags={4: "lost", 5: "lost", 6: "unconfirmed", 20: "lost"})
+    assert flag_runs(t) == [(4, 5, "lost"), (6, 6, "unconfirmed"), (20, 20, "lost")]
+    stops = review_stops([t])
+    assert stops == [4, 6, 20]
+    assert step_to(stops, 4, +1) == 6 and step_to(stops, 4, -1) is None and step_to(stops, 25, -1) == 20
+
+
+def test_thumbnail_collector_keeps_largest_confirmed_box():
+    from core.review import ThumbnailCollector
+    from core.types import Track
+
+    frame = np.zeros((200, 200, 3), np.uint8)
+    t = Track(id=1, box=Box(10, 10, 20, 20), history={0: Box(10, 10, 20, 20), 1: Box(10, 10, 60, 60),
+                                                    2: Box(10, 10, 90, 90)}, flags={2: "lost"})
+    c = ThumbnailCollector(size=48)
+    for i in range(3):
+        c(i, frame, [t])
+    assert max(c.thumbs[1].shape[:2]) == 48 and c._area[1] == 3600  # frame 2 is flagged, skipped
+
+
+def test_redaction_log_has_no_pixels_and_summarises():
+    import json
+
+    from core.review import redaction_log
+    from core.types import Track
+
+    tracks = [Track(id=1, box=Box(0, 0, 5, 5), history={0: Box(0, 0, 5, 5), 1: Box(0, 0, 5, 5)}, flags={1: "lost"}),
+              Track(id=2, box=Box(9, 9, 5, 5), history={0: Box(9, 9, 5, 5)}, redact=False, source="manual")]
+    log = redaction_log(tracks, Config(), {"name": "x.mp4", "frames": 2})
+    json.dumps(log)
+    assert log["summary"] == {"regions": 2, "redacted": 1, "left_visible": [2], "manual": [2], "frames_to_review": 1}
+    assert log["regions"][0]["frames"] == [[0, 1]] and log["regions"][0]["flagged"] == [[1, 1, "lost"]]
+    assert "model_path" not in log["settings"]

@@ -262,3 +262,18 @@ feathered outward, and the hard rectangle is grown by ~0.6 blur sigma
 because a blurred corner keeps only a quarter of its mass, so `clip(2·blur)`
 alone left corners at alpha ≈ 0.98.
 **Trade-off:** More background hidden; the boxy look is more conspicuous.
+
+## D-021 — Review UI built on interactive components, styled as a tool
+**Date:** 2026-11-14
+**Context:** Coordinate entry (D-015) worked but was slow, and the first UI
+looked like a demo (emoji labels, default title, cramped cards).
+**Decision:** Streamlit components v2 (bundled, no build step, no network)
+give a canvas where a click toggles a person and a drag draws a box, and a
+timeline where a click seeks. Coordinate entry stays as fine-tuning of the
+drawn box. Visual design is a theme in `.streamlit/config.toml` (separate
+light and dark palettes, Streamlit's locally served Source Sans) plus
+`ui/style.css`; icons are Material symbols, no emoji.
+**Trade-off:** The canvas and timeline are JavaScript, which AppTest cannot
+exercise; their Python side (what a click or drag does to state) is tested by
+setting the same session state directly, and the JS was checked by hand in
+Chrome.

@@ -214,13 +214,15 @@ def _run(src: str | Path, cfg: Config, progress: Progress | None, on_frame: Fram
     return Analysis(info=info, tracks=manager.all_tracks(), events=manager.events, stats=stats)
 
 
-def analyse_video(src: str | Path, cfg: Config, progress: Progress | None = None) -> Analysis:
+def analyse_video(
+    src: str | Path, cfg: Config, progress: Progress | None = None, on_frame: FrameHook | None = None
+) -> Analysis:
     """Pass 1: find and track every face. Keeps boxes only, never frames.
 
     With `smooth_window > 1` the stored boxes are temporally smoothed
     (core/smoothing.py), so preview and render both see the smoothed masks.
     """
-    analysis = _run(src, cfg, progress, on_frame=None)
+    analysis = _run(src, cfg, progress, on_frame=on_frame)
     analysis.tracks = smooth_tracks(analysis.tracks, cfg.smooth_window)
     return analysis
 

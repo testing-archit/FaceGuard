@@ -27,6 +27,9 @@ OVERLAY_OFF = (0, 140, 255)  # BGR: user unticked it, left visible
 OVERLAY_MANUAL = (255, 160, 0)  # BGR: user-drawn track
 OVERLAY_DRAFT = (255, 0, 255)  # BGR: manual box being entered, not yet added
 
+THUMB_PX = 96  # face gallery crop size, longer side
+THUMB_PADDING = 0.3  # context around the face box in gallery crops
+
 JOB_PREFIX = "faceguard-"
 STALE_JOB_SECONDS = 6 * 3600  # job folders older than this are from dead sessions
 
@@ -217,3 +220,121 @@ def remove_stale_jobs(root: str | Path | None = None, max_age_s: float = STALE_J
         except OSError:
             continue
     return removed
+
+
+# --- review navigation and records ------------------------------------------
+
+
+def frame_runs(frames: list[int] | set[int] | dict) -> list[tuple[int, int]]:
+    """Contiguous runs of frame numbers as inclusive (start, end) pairs."""
+    runs: list[tuple[int, int]] = []
+    for f in sorted(frames):
+        if runs and f == runs[-1][1] + 1:
+            runs[-1] = (runs[-1][0], f)
+        else:
+            runs.append((f, f))
+    return runs
+
+
+def flag_runs(track: Track) -> list[tuple[int, int, str]]:
+    """Contiguous runs of flagged frames with their flag kind."""
+    out: list[tuple[int, int, str]] = []
+    for f in sorted(track.flags):
+        kind = track.flags[f]
+        if out and f == out[-1][1] + 1 and out[-1][2] == kind:
+            out[-1] = (out[-1][0], f, kind)
+        else:
+            out.append((f, f, kind))
+    return out
+
+
+def flagged_frames(tracks: list[Track], redacted_only: bool = True) -> list[int]:
+    """Frames where some box is a tracker guess the detector did not confirm."""
+    return sorted({f for t in tracks if t.redact or not redacted_only for f in t.flags})
+
+
+def review_stops(tracks: list[Track]) -> list[int]:
+    """Where a reviewer should look: the first frame of every flagged run."""
+    return sorted({a for t in tracks if t.redact for a, _, _ in flag_runs(t)})
+
+
+def step_to(stops: list[int], frame: int, direction: int) -> int | None:
+    """Next (direction=+1) or previous (-1) stop strictly after/before `frame`."""
+    if direction > 0:
+        return next((s for s in stops if s > frame), None)
+    return next((s for s in reversed(stops) if s < frame), None)
+
+
+class ThumbnailCollector:
+    """Keeps one small face crop per track while analysis streams the video.
+
+    Used as the pipeline's per-frame hook, so no frame is decoded twice and
+    none is kept: only the crop of the largest detector-confirmed box seen
+    for each track (confirmed boxes are the best framed; flagged ones may be
+    drifting).
+    """
+
+    def __init__(self, size: int = THUMB_PX, padding: float = THUMB_PADDING) -> None:
+        self.size = size
+        self.padding = padding
+        self.thumbs: dict[int, np.ndarray] = {}
+        self._area: dict[int, int] = {}
+
+    def __call__(self, i: int, frame: np.ndarray, present: list[Track]) -> None:
+        h, w = frame.shape[:2]
+        for t in present:
+            box = t.history.get(i)
+            if box is None or i in t.flags or box.area <= self._area.get(t.id, 0):
+                continue
+            self.thumbs[t.id] = crop_thumbnail(frame, box, self.size, self.padding)
+            self._area[t.id] = box.area
+
+
+def crop_thumbnail(frame: np.ndarray, box: Box, size: int = 0, padding: float = 0.0) -> np.ndarray:
+    """Square-ish crop around a box (BGR), resized so its longer side is `size`."""
+    h, w = frame.shape[:2]
+    pb = box.pad(padding, w, h)
+    if pb.area == 0:
+        return np.zeros((max(size, 1), max(size, 1), 3), np.uint8)
+    crop = frame[pb.y : pb.y + pb.h, pb.x : pb.x + pb.w]
+    size = size or THUMB_PX
+    s = size / max(pb.w, pb.h)
+    return cv2.resize(crop, (max(1, round(pb.w * s)), max(1, round(pb.h * s))),
+                      interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
+
+
+def redaction_log(tracks: list[Track], cfg: Config, media: dict, events: list | None = None) -> dict:
+    """An audit record of what was hidden: no pixels, no file contents.
+
+    Lists every region with its frame ranges, whether it was redacted, how
+    it was made (detector or manual) and which frames were tracker guesses,
+    plus the settings that decide the mask. Meant to be kept next to the
+    exported file so a reviewer can see what was checked.
+    """
+    from dataclasses import asdict  # local: only needed here
+
+    settings = {k: v for k, v in asdict(cfg).items() if not k.endswith("_path")}
+    return {
+        "tool": "FaceGuard",
+        "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "media": media,
+        "settings": settings,
+        "summary": {
+            "regions": len(tracks),
+            "redacted": sum(t.redact for t in tracks),
+            "left_visible": [t.id for t in tracks if not t.redact],
+            "manual": [t.id for t in tracks if t.source == "manual"],
+            "frames_to_review": len(flagged_frames(tracks)),
+        },
+        "regions": [
+            {
+                "id": t.id,
+                "source": t.source,
+                "redact": t.redact,
+                "frames": [list(r) for r in frame_runs(t.history)],
+                "flagged": [list(r) for r in flag_runs(t)],
+            }
+            for t in tracks
+        ],
+        "scene_cuts": sorted({e.frame for e in (events or []) if e.kind == "scene_cut"}),
+    }

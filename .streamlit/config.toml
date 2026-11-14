@@ -10,3 +10,45 @@ serverAddress = "localhost"
 
 [client]
 toolbarMode = "minimal"
+
+# Visual design. Fonts are Streamlit's bundled Source Sans/Code (served
+# locally, no font CDN), so the offline guarantee holds.
+[theme]
+font = "sans-serif"
+headingFont = "sans-serif"
+codeFont = "monospace"
+baseFontSize = 14
+headingFontSizes = ["1.6rem", "1.2rem", "1.0rem", "0.9rem", "0.85rem", "0.8rem"]
+headingFontWeights = [650, 600, 600, 600, 600, 600]
+metricValueFontSize = "1.5rem"
+metricValueFontWeight = 600
+baseRadius = "6px"
+buttonRadius = "6px"
+showWidgetBorder = true
+showSidebarBorder = true
+
+[theme.light]
+primaryColor = "#0F766E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F6F8"
+textColor = "#0F172A"
+borderColor = "#E2E8F0"
+linkColor = "#0F766E"
+
+[theme.light.sidebar]
+backgroundColor = "#F8FAFC"
+secondaryBackgroundColor = "#EEF2F6"
+borderColor = "#E2E8F0"
+
+[theme.dark]
+primaryColor = "#0D9488"   # darker than the dark-mode text accent: white button text needs contrast
+backgroundColor = "#0B1015"
+secondaryBackgroundColor = "#151C24"
+textColor = "#E2E8F0"
+borderColor = "#253040"
+linkColor = "#5EEAD4"
+
+[theme.dark.sidebar]
+backgroundColor = "#0E141B"
+secondaryBackgroundColor = "#151C24"
+borderColor = "#253040"

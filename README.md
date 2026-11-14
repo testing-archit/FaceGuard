@@ -55,15 +55,20 @@ Opens on `http://localhost:8501`, bound to this machine with Streamlit usage
 statistics disabled (`.streamlit/config.toml`).
 
 1. Upload a photo or video and press **Detect faces**.
-2. Review: each face gets a number on the left preview; the right preview
-   shows the redacted result. For video, scrub with the frame slider.
-3. Untick **Redact** to leave a person visible, tick **Delete** to remove a
-   false positive. The choice follows that person through the whole clip.
-4. Missed a face? Toggle **Add a manual box**, enter its position (drawn
-   live in magenta), and choose whether the tracker follows it, it holds
-   still to an end frame, or it moves linearly to an end-frame box.
-5. **Render and export**, check the result, download. Audio is dropped
-   unless you tick **Keep original audio**.
+2. **Review.** Click a face on the image to hide or show that person; drag on
+   the image to cover a face the detector missed (fine-tune the box in the
+   panel, and for video choose whether the tracker follows it, it holds
+   still, or it moves to an end-frame box). The People list has thumbnails,
+   toggles and delete for false positives.
+3. **Video.** Scrub with the slider or click the timeline. The flag buttons
+   jump between frames where a box is a tracker estimate the detector did not
+   confirm: those are the frames to check.
+4. **Export.** Switch the view to Preview, then render. Download the file and,
+   optionally, a JSON redaction log of what was hidden where. Audio is dropped
+   unless you turn on **Keep original audio**; metadata is never copied.
+
+The **Batch photos** tab redacts many photos at once and returns a ZIP.
+Presets (Maximum privacy, Balanced, Fast) set several options together.
 
 **Reset session** deletes the upload and every preview and export.
 
@@ -83,7 +88,12 @@ python cli.py --input clip.mp4 --output out.mp4 --mode pixelate \
 | `--detect-interval` | `10` | Run the detector every N frames |
 | `--conf` | `0.6` | Detection confidence threshold |
 | `--padding` | `0.25` | Expand each box by this fraction of its size, per side |
+| `--shape` | `ellipse` | `ellipse` or `rect` (hides the whole padded box) |
+| `--smooth` | `1` | Video: average boxes over N frames (1 = off) |
 | `--keep-audio` | off | Mux the original audio back into the output |
+
+`--input` may be a folder: every supported file in it is redacted into the
+`--output` folder.
 
 ## Evaluation
 
