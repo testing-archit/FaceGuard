@@ -25,7 +25,7 @@ def feather_px(face: Box, cfg: Config) -> int:
 
 
 def build_mask(face: Box, frame_w: int, frame_h: int, cfg: Config) -> tuple[Box, np.ndarray]:
-    """Soft elliptical mask covering a face.
+    """Soft elliptical (or, with `mask_shape="rect"`, rectangular) mask covering a face.
 
     Returns the region of interest (clipped to the frame) and a float32 alpha
     map of the same size. The ellipse is inscribed in the face box padded by
@@ -53,9 +53,31 @@ def build_mask(face: Box, frame_w: int, frame_h: int, cfg: Config) -> tuple[Box,
         return roi, np.zeros((0, 0), np.float32)
 
     hard = np.zeros((roi.h, roi.w), np.float32)
+    if cfg.mask_shape == "rect":
+        # Whole padded box, still feathered outward so there is no hard seam.
+        # A blurred corner keeps only a quarter of its mass, so 2x is not
+        # enough there; growing the rectangle by ~0.6 sigma (sigma = f / 3)
+        # makes the corners fully opaque too.
+        g = math.ceil(f / 5)
+        cv2.rectangle(
+            hard,
+            (math.floor(cx - ax) - g - roi.x, math.floor(cy - ay) - g - roi.y),
+            (math.ceil(cx + ax) + g - roi.x - 1, math.ceil(cy + ay) + g - roi.y - 1),
+            1.0,
+            -1,
+        )
+    else:
+        _ellipse(hard, cx - roi.x, cy - roi.y, ax, ay)
+    # sigma = f / 3 puts the ramp's tail (3 sigma) at the edge of the ROI.
+    soft = cv2.GaussianBlur(hard, (2 * f + 1, 2 * f + 1), sigmaX=f / 3.0)
+    alpha = np.clip(2.0 * soft, 0.0, 1.0)
+    return roi, alpha
+
+
+def _ellipse(img: np.ndarray, cx: float, cy: float, ax: float, ay: float) -> None:
     cv2.ellipse(
-        hard,
-        center=(round(cx - roi.x), round(cy - roi.y)),
+        img,
+        center=(round(cx), round(cy)),
         axes=(math.ceil(ax), math.ceil(ay)),
         angle=0,
         startAngle=0,
@@ -63,10 +85,6 @@ def build_mask(face: Box, frame_w: int, frame_h: int, cfg: Config) -> tuple[Box,
         color=1.0,
         thickness=-1,
     )
-    # sigma = f / 3 puts the ramp's tail (3 sigma) at the edge of the ROI.
-    soft = cv2.GaussianBlur(hard, (2 * f + 1, 2 * f + 1), sigmaX=f / 3.0)
-    alpha = np.clip(2.0 * soft, 0.0, 1.0)
-    return roi, alpha
 
 
 def blur_kernel(face: Box, cfg: Config) -> int:

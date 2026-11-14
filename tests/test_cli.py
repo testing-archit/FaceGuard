@@ -44,3 +44,27 @@ def test_video_export_keeps_size_fps_and_audio(tmp_path):
         assert (a.info.width, a.info.height, a.info.fps) == (b.info.width, b.info.height, b.info.fps)
         assert b.info.frame_count == a.info.frame_count
     assert has_audio(out)
+
+
+def test_batch_folder(tmp_path):
+    import cv2
+    import numpy as np
+
+    from cli import main
+
+    src = tmp_path / "in"
+    src.mkdir()
+    for name in ("a.png", "b.jpg"):
+        cv2.imwrite(str(src / name), np.full((60, 80, 3), 128, np.uint8))
+    (src / "notes.txt").write_text("ignored")
+    (src / "broken.png").write_bytes(b"not an image")
+    dst = tmp_path / "out"
+    assert main(["--input", str(src), "--output", str(dst)]) == 1  # broken.png fails, rest continue
+    assert sorted(p.name for p in dst.iterdir()) == ["a.png", "b.jpg"]
+
+
+def test_batch_refuses_same_folder(tmp_path):
+    from cli import main
+
+    (tmp_path / "a.png").write_bytes(b"x")
+    assert main(["--input", str(tmp_path), "--output", str(tmp_path)]) == 1

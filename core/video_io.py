@@ -160,9 +160,15 @@ def finalise(silent: str | Path, dst: str | Path, audio_src: str | Path | None) 
         return warnings
 
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(silent)]
+    # Strip container metadata (creation time, device, GPS, title), chapters,
+    # subtitles and data streams: only the redacted picture and, if asked,
+    # the audio leave the tool.
+    strip = ["-map_metadata", "-1", "-map_chapters", "-1", "-sn", "-dn"]
     if audio_src is not None:
         cmd += ["-i", str(audio_src), "-map", "0:v:0", "-map", "1:a:0?", "-c:a", "aac", "-shortest"]
-    cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", str(dst)]
+    else:
+        cmd += ["-map", "0:v:0"]
+    cmd += strip + ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", str(dst)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise FaceGuardError(f"ffmpeg failed while writing {dst}: {result.stderr.strip()[-400:]}")

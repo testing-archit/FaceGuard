@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from core.tracking import Tracker, TrackerFactory
-from core.types import Box, Config, Detection, Track
+from core.types import FLAG_LOST, FLAG_UNCONFIRMED, Box, Config, Detection, Track
 
 
 def greedy_match(
@@ -102,6 +102,10 @@ class TrackManager:
             present = [t for t in self.live if t.id in matched_ids]
         for t in present:
             t.history[i] = t.box
+            if t.lost:
+                t.flags[i] = FLAG_LOST
+            elif self._last_detection is not None and t.last_seen_frame < self._last_detection:
+                t.flags[i] = FLAG_UNCONFIRMED
         return present
 
     @property

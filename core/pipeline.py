@@ -26,6 +26,7 @@ from core.association import IdEvent, TrackManager
 from core.detectors import Detector, make_detector
 from core.errors import FaceGuardError, media_kind
 from core.redact import redact
+from core.smoothing import smooth_tracks
 from core.tracking import tracker_factory
 from core.types import Box, Config, Detection, Track
 from core.video_io import VideoInfo, VideoReader, VideoWriter, finalise, limit_warnings
@@ -214,8 +215,14 @@ def _run(src: str | Path, cfg: Config, progress: Progress | None, on_frame: Fram
 
 
 def analyse_video(src: str | Path, cfg: Config, progress: Progress | None = None) -> Analysis:
-    """Pass 1: find and track every face. Keeps boxes only, never frames."""
-    return _run(src, cfg, progress, on_frame=None)
+    """Pass 1: find and track every face. Keeps boxes only, never frames.
+
+    With `smooth_window > 1` the stored boxes are temporally smoothed
+    (core/smoothing.py), so preview and render both see the smoothed masks.
+    """
+    analysis = _run(src, cfg, progress, on_frame=None)
+    analysis.tracks = smooth_tracks(analysis.tracks, cfg.smooth_window)
+    return analysis
 
 
 def boxes_at(tracks: list[Track], frame: int, selected: set[int] | None = None) -> list[Box]:
@@ -258,7 +265,21 @@ def render_video(
 def process_video(
     src: str | Path, dst: str | Path, cfg: Config, progress: Progress | None = None
 ) -> Analysis:
-    """Analyse and render in a single pass, redacting every track (CLI path)."""
+    """Analyse and render in a single pass, redacting every track (CLI path).
+
+    Smoothing needs future frames, so with `smooth_window > 1` this falls back
+    to the two-pass analyse + render.
+    """
+    if cfg.smooth_window > 1:
+        start = time.perf_counter()
+        analysis = analyse_video(src, cfg, progress)
+        r = render_video(src, dst, analysis.tracks, cfg, progress)
+        s = analysis.stats
+        s.loop_seconds += r.loop_seconds
+        s.redact_seconds, s.faces_redacted = r.redact_seconds, r.faces_redacted
+        s.warnings += r.warnings
+        s.total_seconds = time.perf_counter() - start
+        return analysis
     with VideoReader(src) as probe:
         info = probe.info
     start = time.perf_counter()
@@ -296,6 +317,7 @@ def tracks_to_json(tracks: list[Track], cfg: Config | None = None) -> dict:
                 "source": t.source,
                 "redact": t.redact,
                 "boxes": {str(f): b.as_list() for f, b in sorted(t.history.items())},
+                "flags": {str(f): v for f, v in sorted(t.flags.items())},
             }
             for t in tracks
         ]
@@ -315,6 +337,7 @@ def tracks_from_json(data: dict) -> list[Track]:
                 source=d.get("source", "detector"),
                 last_seen_frame=last,
                 history=history,
+                flags={int(f): v for f, v in d.get("flags", {}).items()},
             )
         )
     return tracks

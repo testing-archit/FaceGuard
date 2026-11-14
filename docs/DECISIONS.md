@@ -233,3 +233,32 @@ live track is ended and logged, and the detector runs on that frame.
 composition is missed and handled as fast motion instead.
 **Evidence:** 0 false cuts on both synthetic clips (was 7). Unit tests cover
 fade, pan and a real cut. No real footage with cuts has been annotated yet.
+
+## D-019 — Temporal smoothing is offered but off by default
+**Date:** 2026-11-14
+**Context:** Detector boxes wobble and re-anchoring makes tracks jump, so
+masks shimmer (TASKS stretch goal). Analysis stores every box before
+rendering, so a zero-phase centred moving average is possible.
+**Decision:** `smooth_window` (centred moving average of box centre and size,
+per contiguous run, window shrinking symmetrically at run ends) is available
+in the CLI (`--smooth`) and UI, default 1 (off). Manual tracks are never
+smoothed.
+**Trade-off:** Smoothing low-passes real motion as well as noise: at a sharp
+change of direction the smoothed box lags the face.
+**Evidence:** LK, interval 10. Window / jitter (mean |second difference| of box
+centre, px) / leak frames on synthetic_er: 1 / 1.02 / 0; 3 / 0.95 / 0;
+5 / 0.97 / 5; 9 / 0.91 / 29; 15 / 0.80 / 57, all new leaks in the whip pan.
+synthetic_cross: jitter 1.00 → 0.83 at window 3, leaks unchanged (8). Jitter
+falls by at most ~20% while every window ≥ 5 costs coverage, so the default
+stays off. Window 3 is the only setting that is free on both clips.
+
+## D-020 — Rectangle masks as a "maximum coverage" option
+**Date:** 2026-11-14
+**Context:** The ellipse needs padding ≥ 0.207 to contain the face box
+corners (D-006). Users who want everything hidden regardless of box
+tightness need a shape with no such condition.
+**Decision:** `mask_shape = "rect"` masks the whole padded box. It is still
+feathered outward, and the hard rectangle is grown by ~0.6 blur sigma
+because a blurred corner keeps only a quarter of its mass, so `clip(2·blur)`
+alone left corners at alpha ≈ 0.98.
+**Trade-off:** More background hidden; the boxy look is more conspicuous.

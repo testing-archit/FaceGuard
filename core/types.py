@@ -9,6 +9,9 @@ import numpy as np
 DETECTORS = ("yunet", "haar")
 TRACKERS = ("lk", "csrt", "kcf", "none", "off")
 MODES = ("blur", "pixelate", "fill")
+SHAPES = ("ellipse", "rect")
+FLAG_LOST = "lost"  # tracker lost the face; box frozen at its last position
+FLAG_UNCONFIRMED = "unconfirmed"  # tracker follows it but the last detection missed it
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,9 @@ class Track:
     lost_since: int = 0  # frame the tracker lost it (valid while lost)
     score: float | None = None  # detector confidence, images only (shown in the preview)
     history: dict[int, Box] = field(default_factory=dict)
+    # frame -> FLAG_LOST | FLAG_UNCONFIRMED: frames where this box is a guess the
+    # detector did not back up. Shown on the UI timeline as "check here".
+    flags: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -148,6 +154,8 @@ class Config:
     pixel_blocks: int = 8  # pixelate: downscale ROI to N x N blocks
     feather_frac: float = 0.08  # soft edge width as a fraction of box width
     fill_color: tuple[int, int, int] = (0, 0, 0)  # BGR
+    mask_shape: str = "ellipse"  # ellipse (soft, natural) | rect (covers the whole padded box)
+    smooth_window: int = 1  # frames; centred moving average of track boxes, 1 = off (D-019)
 
     # io
     keep_audio: bool = False
@@ -165,3 +173,7 @@ class Config:
             raise ValueError("conf_threshold must be in [0, 1]")
         if self.padding < 0:
             raise ValueError("padding must be >= 0")
+        if self.mask_shape not in SHAPES:
+            raise ValueError(f"mask_shape must be one of {SHAPES}, got {self.mask_shape!r}")
+        if self.smooth_window < 1:
+            raise ValueError("smooth_window must be >= 1")

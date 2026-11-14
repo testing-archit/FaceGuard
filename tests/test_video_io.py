@@ -84,3 +84,19 @@ def test_finalise_without_ffmpeg_warns_and_keeps_file(tmp_path, monkeypatch):
     warnings = finalise(silent, dst, audio_src=tmp_path / "whatever.mp4")
     assert dst.exists()
     assert any("audio was not preserved" in w for w in warnings)
+
+
+@needs_ffmpeg
+def test_finalise_strips_source_metadata(tmp_path):
+    clip = tmp_path / "c.mp4"
+    make_clip(clip)
+    tagged = tmp_path / "tagged.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(clip), "-c", "copy",
+                    "-metadata", "title=Secret Location", "-metadata", "location=+28.4+077.5/",
+                    str(tagged)], check=True)
+    silent = tmp_path / "out.silent.mp4"
+    shutil.copy(tagged, silent)  # stands in for the redacted silent file
+    finalise(silent, tmp_path / "out.mp4", tagged)
+    tags = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format_tags", "-of", "json",
+                           str(tmp_path / "out.mp4")], capture_output=True, text=True).stdout
+    assert "Secret" not in tags and "location" not in tags
