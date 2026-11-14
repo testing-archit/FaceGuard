@@ -1,9 +1,16 @@
 # FaceGuard — Results
 
-Hand-recorded milestone numbers. In Week 5 this file is regenerated in full by
-`python eval/run_experiments.py --config eval/experiments.yaml`.
+Everything between the GENERATED markers is rewritten by
+`python eval/run_experiments.py --config eval/experiments.yaml`. The
+milestone notes after it were recorded by hand while building and are kept
+as they are.
 
-## Environment
+<!-- BEGIN GENERATED: eval/run_experiments.py -->
+<!-- END GENERATED -->
+
+# Milestone notes (hand-recorded)
+
+## Environment for the milestone notes
 
 | | |
 |---|---|

@@ -28,6 +28,8 @@ from core.video_io import VideoReader  # noqa: E402
 COVERED_ALPHA = 0.5  # a pixel counts as masked at or above this alpha
 LEAK_COVERAGE = 0.90  # a face below this coverage is a leak
 MATCH_IOU = 0.5  # detection / identity matching threshold
+SMALL_FACE_PX = 40  # E5 size groups, box width in px
+LARGE_FACE_PX = 100
 
 GtFrames = dict[int, list[tuple[int, Box]]]  # frame -> [(person id, box)]
 
@@ -162,6 +164,127 @@ def evaluate_video(
             name: sum(1 for f in m.leak_frame_ids if lo <= f < hi) for name, (lo, hi) in segments.items()
         }
     return m
+
+
+def match_boxes(gts: list[Box], preds: list[Box], iou: float = MATCH_IOU) -> list[tuple[int, int]]:
+    """One-to-one matching, highest IoU first; pairs below `iou` never match."""
+    pairs = sorted(
+        ((g.iou(p), gi, pi) for gi, g in enumerate(gts) for pi, p in enumerate(preds)),
+        reverse=True,
+    )
+    used_g: set[int] = set()
+    used_p: set[int] = set()
+    out = []
+    for v, gi, pi in pairs:
+        if v < iou:
+            break
+        if gi in used_g or pi in used_p:
+            continue
+        used_g.add(gi)
+        used_p.add(pi)
+        out.append((gi, pi))
+    return out
+
+
+@dataclass
+class DetectionCounts:
+    """TP / FP / FN tallies; precision, recall and F1 derived from them."""
+
+    tp: int = 0
+    fp: int = 0
+    fn: int = 0
+
+    def add(self, other: DetectionCounts) -> None:
+        self.tp += other.tp
+        self.fp += other.fp
+        self.fn += other.fn
+
+    @property
+    def precision(self) -> float:
+        return self.tp / (self.tp + self.fp) if self.tp + self.fp else 0.0
+
+    @property
+    def recall(self) -> float:
+        return self.tp / (self.tp + self.fn) if self.tp + self.fn else 0.0
+
+    @property
+    def f1(self) -> float:
+        p, r = self.precision, self.recall
+        return 2 * p * r / (p + r) if p + r else 0.0
+
+
+def count_detections(gts: list[Box], preds: list[Box], iou: float = MATCH_IOU) -> DetectionCounts:
+    n = len(match_boxes(gts, preds, iou))
+    return DetectionCounts(tp=n, fp=len(preds) - n, fn=len(gts) - n)
+
+
+def pr_curve(
+    images: list[tuple[list[Box], list[tuple[Box, float]]]], iou: float = MATCH_IOU
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Precision-recall curve over a set of images, VOC style.
+
+    `images` is [(ground-truth boxes, [(predicted box, score), ...]), ...].
+    Detections from all images are ranked by score; each is a true positive
+    if it overlaps a not-yet-claimed ground-truth box in its image at
+    IoU >= `iou`. Matching in score order means the matches at threshold t
+    are exactly those of the top-ranked prefix, so one pass gives the whole
+    curve. Returns (scores, precision, recall, average precision), where
+    entry k is the operating point "threshold = scores[k]".
+    """
+    ranked = sorted(
+        ((score, img, box) for img, (_, preds) in enumerate(images) for box, score in preds),
+        key=lambda r: -r[0],
+    )
+    n_gt = sum(len(g) for g, _ in images)
+    claimed: list[set[int]] = [set() for _ in images]
+    tp = np.zeros(len(ranked))
+    for k, (_, img, box) in enumerate(ranked):
+        gts = images[img][0]
+        best, best_iou = None, iou
+        for gi, g in enumerate(gts):
+            v = g.iou(box)
+            if gi not in claimed[img] and v >= best_iou:
+                best, best_iou = gi, v
+        if best is not None:
+            claimed[img].add(best)
+            tp[k] = 1
+    ctp = np.cumsum(tp)
+    precision = ctp / np.arange(1, len(ranked) + 1) if ranked else np.zeros(0)
+    recall = ctp / n_gt if n_gt else np.zeros(len(ranked))
+    scores = np.array([r[0] for r in ranked])
+    # AP: area under the precision envelope (monotone non-increasing), all points.
+    ap = 0.0
+    if len(ranked):
+        env = np.maximum.accumulate(precision[::-1])[::-1]
+        prev_r = 0.0
+        for r, p in zip(recall, env):
+            ap += (r - prev_r) * p
+            prev_r = r
+    return scores, precision, recall, float(ap)
+
+
+def size_bucket(box: Box) -> str:
+    """EVALUATION E5 face-size groups: small < 40 px, large > 100 px (box width)."""
+    if box.w < SMALL_FACE_PX:
+        return "small"
+    if box.w > LARGE_FACE_PX:
+        return "large"
+    return "medium"
+
+
+def mask_area_ratio(preds: list[Box], frame_w: int, frame_h: int, cfg: Config) -> float:
+    """Masked pixels (alpha >= 0.5) per predicted box, divided by that box's area.
+
+    How much more than the detector box the mask hides: the cost side of
+    the padding trade-off (E6).
+    """
+    ratios = []
+    for p in preds:
+        if p.area == 0:
+            continue
+        _, a = build_mask(p, frame_w, frame_h, cfg)
+        ratios.append(float((a >= COVERED_ALPHA).sum()) / p.area)
+    return float(np.mean(ratios)) if ratios else 0.0
 
 
 def evaluate_files(pred_path: str | Path, truth_path: str | Path, video: str | None = None) -> VideoMetrics:

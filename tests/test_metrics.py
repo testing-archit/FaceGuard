@@ -66,3 +66,31 @@ def test_interpolation_between_keyframes():
     gt = load_video_truth(entry)
     assert gt[2] == [(0, Box(20, 0, 10, 10))]
     assert sorted(gt) == [0, 1, 2, 3, 4]
+
+
+def test_match_boxes_one_to_one():
+    from eval.metrics import count_detections, match_boxes
+    g = [Box(0, 0, 10, 10), Box(100, 100, 10, 10)]
+    p = [Box(1, 0, 10, 10), Box(0, 1, 10, 10), Box(300, 300, 5, 5)]
+    assert len(match_boxes(g, p)) == 1
+    c = count_detections(g, p)
+    assert (c.tp, c.fp, c.fn) == (1, 2, 1)
+    assert c.precision == pytest.approx(1 / 3) and c.recall == pytest.approx(0.5)
+
+
+def test_pr_curve_ranks_by_score():
+    from eval.metrics import pr_curve
+    g = [Box(0, 0, 10, 10), Box(50, 50, 10, 10)]
+    imgs = [(g, [(Box(0, 0, 10, 10), 0.9), (Box(200, 200, 10, 10), 0.8), (Box(50, 50, 10, 10), 0.3)])]
+    scores, prec, rec, ap = pr_curve(imgs)
+    assert list(scores) == [0.9, 0.8, 0.3]
+    assert list(rec) == [0.5, 0.5, 1.0]
+    assert prec[0] == 1.0 and prec[1] == 0.5 and prec[2] == pytest.approx(2 / 3)
+    assert ap == pytest.approx(0.5 * 1.0 + 0.5 * 2 / 3)
+
+
+def test_size_bucket():
+    from eval.metrics import size_bucket
+    assert size_bucket(Box(0, 0, 20, 20)) == "small"
+    assert size_bucket(Box(0, 0, 60, 60)) == "medium"
+    assert size_bucket(Box(0, 0, 120, 120)) == "large"

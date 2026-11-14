@@ -1,0 +1,34 @@
+# FaceGuard experiment sweep (docs/EVALUATION.md section 4).
+#   python eval/run_experiments.py --config eval/experiments.yaml
+# Regenerates eval/out/*.png, eval/out/raw_results.json and the generated
+# block of docs/RESULTS.md.
+
+runs: 3                     # timing repeats per configuration (mean ± std)
+out: eval/out
+results_md: docs/RESULTS.md
+
+# Config overrides shared by every run; anything not listed uses core/types.py defaults.
+base_config:
+  mode: pixelate
+
+experiments: [e1, e2, e3, e4, e5, e6]
+
+videos:
+  # Synthetic clips: exact per-frame boxes. Regenerate with scripts/make_*_clip.py.
+  - truth: data/samples/synthetic_er.gt.json
+  - truth: data/samples/synthetic_cross.gt.json
+  # Hand-annotated real clips (eval/annotate.py video ...). Skipped if missing.
+  - truth: data/ground_truth.json
+
+images:
+  annotated: [data/ground_truth.json]       # eval/annotate.py images ...
+  synthetic_stills:                         # exact boxes, condition = segment
+    truth: data/samples/synthetic_er.gt.json
+    every: 15
+
+e1_detectors: [yunet, haar]
+e2_intervals: [1, 5, 10, 15, 30]
+e3_interval: 10
+e3_trackers: [lk, csrt, kcf, none, "off"]   # quoted: YAML reads bare off as false
+e4_thresholds: [0.3, 0.5, 0.6, 0.7, 0.9]
+e6_paddings: [0.0, 0.1, 0.2, 0.25, 0.3]
