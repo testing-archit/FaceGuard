@@ -107,3 +107,25 @@ def test_lost_track_gets_short_grace_from_moment_lost():
     present = run_with(cfg, LosingTracker, [[det(10, 10)]] + [[] for _ in range(5)])
     # lost on frame 1; kept while i - 1 <= 2
     assert present == [[1], [1], [1], [1], [], []]
+
+
+def test_unconfirmed_flags_tracker_detector_disagreement():
+    tm = TrackManager(Config(tracker="none"), NullTracker)
+    tm.step(0, FRAME, GRAY, [det(10, 10), det(100, 100)])
+    assert not tm.any_unconfirmed
+    tm.step(1, FRAME, GRAY, None)
+    assert not tm.any_unconfirmed  # no detection since: nothing to disagree with
+    tm.step(2, FRAME, GRAY, [det(10, 10)])  # second face missed by the detector
+    assert tm.any_unconfirmed
+    tm.step(3, FRAME, GRAY, [det(10, 10), det(100, 100)])
+    assert not tm.any_unconfirmed
+
+
+def test_scene_cut_retires_and_logs():
+    tm = TrackManager(Config(tracker="none"), NullTracker)
+    tm.step(0, FRAME, GRAY, [det(10, 10), det(100, 100)])
+    tm.scene_cut(5)
+    assert tm.live == [] and len(tm.finished) == 2
+    assert [(e.kind, e.frame) for e in tm.events] == [("scene_cut", 5), ("scene_cut", 5)]
+    tm.step(5, FRAME, GRAY, [det(10, 10)])
+    assert [t.id for t in tm.live] == [3]  # IDs are never reused across a cut

@@ -191,3 +191,45 @@ rendering and apply instantly. Detection settings (detector, threshold,
 tracker, interval) mark the analysis stale and need an explicit re-run, which
 warns that it discards manual edits.
 **Trade-off:** One extra click after changing detection settings.
+
+## D-017 — Run the detector early when tracker and detector disagree
+**Date:** 2026-11-14
+**Context:** On the crossing clip (`scripts/make_crossing_clip.py`), LK at
+interval 10 leaked 13 frames: 5 when a face re-emerged from behind another
+and 8 when a new face walked in. Tracing the boxes showed the occluded face's
+track was never "lost": its corner points latched onto the shoulder of the
+person passing in front and followed them. When the real face reappeared it
+waited for the next scheduled detection. The course proposal also asks for
+immediate detection when tracking is weak.
+**Options:** (a) detect early when a tracker returns None; (b) detect early
+while two face boxes overlap; (c) detect early while any track was not
+matched by the last detection (tracker and detector disagree).
+**Decision:** (a) and (c). (b) was implemented and dropped: the person in
+front hides the face with their head and shoulders before the two face
+boxes overlap, so it never fired. (c) runs the detector every
+`unconfirmed_interval` = 3 frames until the disagreement resolves.
+**Trade-off:** Extra detector calls exactly where tracking is uncertain
+(rotated faces, occlusion). Entry of a brand-new face is not helped: no
+track exists to disagree with, so it still waits for the next scheduled
+detection.
+**Evidence:** analyse-only FPS / detector calls / leak frames at interval 10.
+Crossing: scheduled only 285 / 45 / 13; unconfirmed every 1: 201 / 91 / 8;
+**every 3: 243 / 61 / 8** (crossing leaks 5 → 0, the 8 left are the
+entering face). First clip: 172 / 60 / 0 → 168 / 72 / 0, no change in
+leaks. Full table: E7 in docs/RESULTS.md.
+
+## D-018 — Scene cuts need a change in both histogram and layout
+**Date:** 2026-11-14
+**Context:** Tracks must not continue across a cut: optical flow between two
+different shots is meaningless and a track ID is a motion track, not an
+identity. A grey-histogram correlation test alone fired 7 times on the first
+synthetic clip, all in its low-light fade, splitting 6 people into 48 IDs.
+**Decision:** A cut needs histogram correlation < 0.5 **and** normalised
+cross-correlation of a 32 px wide zero-mean, unit-variance thumbnail < 0.3.
+A fade changes the histogram but not the normalised layout; a whip pan
+changes the layout but not the histogram; a cut changes both. On a cut every
+live track is ended and logged, and the detector runs on that frame.
+**Trade-off:** A cut between two shots with similar lighting and similar
+composition is missed and handled as fast motion instead.
+**Evidence:** 0 false cuts on both synthetic clips (was 7). Unit tests cover
+fade, pan and a real cut. No real footage with cuts has been annotated yet.

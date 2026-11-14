@@ -74,12 +74,14 @@ def run_video(src: str, dst: str, cfg: Config, tracks_path: str | None = None) -
     stats = analysis.stats
     for w in stats.warnings:
         print(f"warning: {w}", file=sys.stderr)
+    merges = [e for e in analysis.events if e.kind == "duplicate"]
     print(
         f"Processed {stats.frames} frames at {stats.fps:.1f} FPS "
         f"({stats.total_seconds:.1f} s total), {len(analysis.tracks)} track(s), "
-        f"{len(analysis.events)} suspected ID switch(es) -> {dst}"
+        f"{stats.detector_calls} detector call(s) ({stats.early_detections} early), "
+        f"{stats.scene_cuts} scene cut(s), {len(merges)} suspected ID switch(es) -> {dst}"
     )
-    for e in analysis.events:
+    for e in merges:
         print(f"  frame {e.frame}: track {e.dropped} merged into {e.kept}", file=sys.stderr)
     if tracks_path:
         save_tracks(tracks_path, analysis.tracks, cfg)

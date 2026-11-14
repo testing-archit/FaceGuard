@@ -50,7 +50,8 @@ class IdEvent:
     """A suspected identity problem, logged for the evaluation report."""
 
     frame: int
-    kind: str  # "duplicate": two tracks converged on one face; the younger was dropped
+    kind: str  # "duplicate": two tracks converged on one face, the younger was dropped
+    #            "scene_cut": the scene changed, every live track was ended
     kept: int
     dropped: int
 
@@ -74,6 +75,7 @@ class TrackManager:
         self.events: list[IdEvent] = []
         self._trackers: dict[int, Tracker] = {}
         self._next_id = 1
+        self._last_detection: int | None = None
 
     def step(
         self, i: int, frame: np.ndarray, gray: np.ndarray, detections: list[Detection] | None
@@ -91,6 +93,7 @@ class TrackManager:
 
         matched_ids: set[int] = set()
         if detections is not None:
+            self._last_detection = i
             matched_ids = self._associate(i, frame, gray, detections)
 
         if self._hold:
@@ -100,6 +103,32 @@ class TrackManager:
         for t in present:
             t.history[i] = t.box
         return present
+
+    @property
+    def any_lost(self) -> bool:
+        """True if a tracker has lost a face that is still being held (frozen box)."""
+        return any(t.lost for t in self.live)
+
+    @property
+    def any_unconfirmed(self) -> bool:
+        """True if the last detector run missed a face a tracker still reports.
+
+        Tracker and detector disagree, so one of them is wrong: the detector
+        missed a hard pose, or the tracker has been dragged off the face (an
+        occluded face's points latch onto whatever passes in front, without
+        the track ever being "lost"). Detecting more often until they agree
+        again resolves it either way.
+        """
+        if self._last_detection is None:
+            return False
+        return any(t.last_seen_frame < self._last_detection for t in self.live)
+
+    def scene_cut(self, i: int) -> None:
+        """End every live track: a track ID never crosses a cut (motion is meaningless
+        across it, and an ID is a motion track, not an identity)."""
+        for t in list(self.live):
+            self.events.append(IdEvent(frame=i, kind="scene_cut", kept=0, dropped=t.id))
+            self._retire(t)
 
     def _associate(
         self, i: int, frame: np.ndarray, gray: np.ndarray, detections: list[Detection]

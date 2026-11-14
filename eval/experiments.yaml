@@ -11,7 +11,7 @@ results_md: docs/RESULTS.md
 base_config:
   mode: pixelate
 
-experiments: [e1, e2, e3, e4, e5, e6]
+experiments: [e1, e2, e3, e4, e5, e6, e7]
 
 videos:
   # Synthetic clips: exact per-frame boxes. Regenerate with scripts/make_*_clip.py.
@@ -32,3 +32,4 @@ e3_interval: 10
 e3_trackers: [lk, csrt, kcf, none, "off"]   # quoted: YAML reads bare off as false
 e4_thresholds: [0.3, 0.5, 0.6, 0.7, 0.9]
 e6_paddings: [0.0, 0.1, 0.2, 0.25, 0.3]
+e7_unconfirmed_intervals: [1, 3]   # E7: re-detect every N frames while a track is unconfirmed

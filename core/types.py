@@ -130,6 +130,15 @@ class Config:
     max_misses: int = 15  # frames a LOST track (frozen box) is kept before deletion
     max_unconfirmed: int = 60  # frames a still-tracked track may go without a detector match
     duplicate_iou: float = 0.7  # two tracks above this are the same face
+    # early detection (D-017): run the detector on the next frame, off schedule, when
+    refresh_on_lost: bool = True  # ... a tracker has lost its face
+    unconfirmed_interval: int = 3  # ... every N frames while a tracked face went unmatched by the
+    #                                 last detection (tracker and detector disagree); 0 disables
+    # scene cuts: a cut needs BOTH a different intensity histogram and a different layout
+    scene_cut_corr: float = 0.5  # grey-histogram correlation below this; 0 disables cut detection
+    scene_cut_ncc: float = 0.3  # thumbnail normalised cross-correlation below this
+    scene_cut_bins: int = 32  # histogram bins
+    scene_cut_width: int = 32  # px, thumbnail width for both tests (height keeps aspect)
 
     # redaction
     mode: str = "pixelate"  # blur | pixelate | fill

@@ -64,7 +64,7 @@ DEFAULTS = {
     "out": "eval/out",
     "results_md": "docs/RESULTS.md",
     "base_config": {},
-    "experiments": ["e1", "e2", "e3", "e4", "e5", "e6"],
+    "experiments": ["e1", "e2", "e3", "e4", "e5", "e6", "e7"],
     "videos": [],
     "images": {},
     "e1_detectors": ["yunet", "haar"],
@@ -73,7 +73,16 @@ DEFAULTS = {
     "e3_trackers": ["lk", "csrt", "kcf", "none", "off"],
     "e4_thresholds": [0.3, 0.5, 0.6, 0.7, 0.9],
     "e6_paddings": [0.0, 0.1, 0.2, 0.25, 0.3],
+    "e7_unconfirmed_intervals": [1, 3],
 }
+
+# E7 refresh policies, cumulative: each adds one early-detection rule (D-017).
+def e7_policies(unconfirmed: list[int]) -> list[tuple[str, dict]]:
+    return (
+        [("scheduled only", {"refresh_on_lost": False, "unconfirmed_interval": 0}),
+         ("+ lost track", {"refresh_on_lost": True, "unconfirmed_interval": 0})]
+        + [(f"+ unconfirmed, every {n}", {"refresh_on_lost": True, "unconfirmed_interval": n}) for n in unconfirmed]
+    )
 PR_FLOOR = 0.05  # YuNet threshold for the PR sweep; every operating point above it is reachable
 
 
@@ -217,6 +226,7 @@ class VideoRun:
     metrics: VideoMetrics
     tracks: list[Track]
     detector_calls: int
+    early_detections: int
     events: int
 
     @property
@@ -239,7 +249,7 @@ class Runner:
         cfg = replace(self.base, **overrides)
         if cfg.tracker == "off":
             cfg = replace(cfg, detect_interval=1)
-        key = (v.name, cfg.detector, cfg.tracker, cfg.detect_interval, cfg.conf_threshold)
+        key = (v.name, repr(cfg))
         if key in self._cache:
             return self._cache[key]
         fps, analysis = [], None
@@ -247,9 +257,12 @@ class Runner:
             analysis = process_video(v.path, self.tmp / "out.mp4", cfg)
             fps.append(analysis.stats.fps)
         m = evaluate_video(analysis.tracks, v.truth, v.width, v.height, cfg, v.segments)
-        res = VideoRun(fps, m, analysis.tracks, analysis.stats.detector_calls, len(analysis.events))
+        res = VideoRun(fps, m, analysis.tracks, analysis.stats.detector_calls,
+                       analysis.stats.early_detections, len(analysis.events))
         self._cache[key] = res
         label = f"{cfg.detector}/{cfg.tracker}/{cfg.detect_interval}"
+        if cfg.tracker != "off" and (not cfg.refresh_on_lost or cfg.unconfirmed_interval != self.base.unconfirmed_interval):
+            label += f"/lost={int(cfg.refresh_on_lost)},unc={cfg.unconfirmed_interval}"
         print(f"  {v.name:<18} {label:<16} {res.fps:7.1f} FPS  leak {m.leak_frames:4d}  "
               f"cov {m.mean_coverage:.4f}  tracks {m.tracks}", flush=True)
         return res
@@ -259,7 +272,7 @@ def video_row(r: VideoRun) -> dict:
     m = r.metrics
     return {
         "fps_runs": [round(f, 2) for f in r.fps_runs], "fps": round(r.fps, 2), "fps_std": round(r.fps_std, 2),
-        "detector_calls": r.detector_calls, "leak_frames": m.leak_frames,
+        "detector_calls": r.detector_calls, "early_detections": r.early_detections, "leak_frames": m.leak_frames,
         "leak_frames_by_segment": m.leak_frames_by_segment, "mean_coverage": round(m.mean_coverage, 5),
         "precision": round(m.precision, 4), "recall": round(m.recall, 4), "f1": round(m.f1, 4),
         "id_consistency": round(m.id_consistency, 4), "id_switches": m.id_switches,
@@ -543,6 +556,16 @@ def report(res: dict, exp: dict) -> str:
         for v, rows_ in res["e6"].items():
             rows = [[r["padding"], r["mean_coverage"], r["leak_frames"], r["mask_area_ratio"]] for r in rows_]
             s += [f"**{v}**", "", table(["Padding", "Mean coverage", "Leak frames", "Mask area ratio"], rows), ""]
+    if res.get("e7"):
+        s += [f"## E7 — early-detection policy (LK, detect every {exp['e3_interval']})", "",
+              "Each row adds one rule for running the detector off schedule (DECISIONS D-017). "
+              "The default is the last row with the configured interval "
+              f"(`unconfirmed_interval` = {Config().unconfirmed_interval}).", ""]
+        for v, rows_ in res["e7"].items():
+            segs = list(rows_[0]["leak_frames_by_segment"])
+            rows = [[r["policy"], f"{r['fps']:.1f} ± {r['fps_std']:.1f}", r["detector_calls"], r["early_detections"],
+                     r["leak_frames"]] + [r["leak_frames_by_segment"].get(sg, 0) for sg in segs] for r in rows_]
+            s += [f"**{v}**", "", table(["Policy", "FPS", "Detector calls", "Early", "Leak frames"] + segs, rows), ""]
     s.append(END)
     return "\n".join(s)
 
@@ -592,7 +615,7 @@ def main(argv: list[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     results_md = Path(args.results_md or ROOT / exp.get("results_md", "docs/RESULTS.md"))
     base = Config(**exp.get("base_config", {}))
-    todo = set(exp.get("experiments", ["e1", "e2", "e3", "e4", "e5", "e6"]))
+    todo = set(exp["experiments"])
 
     videos = load_videos(exp.get("videos", []))
     images = load_images(exp.get("images", {}))
@@ -635,6 +658,12 @@ def main(argv: list[str] | None = None) -> int:
             n = int(exp.get("e3_interval", 10))
             res["e6"] = {v.name: e6_padding(v, runner.run(v, tracker="lk", detect_interval=n), base,
                                             exp.get("e6_paddings", [0.0, 0.1, 0.2, 0.25, 0.3])) for v in videos}
+
+        if videos and "e7" in todo:
+            print("E7 refresh policy", flush=True)
+            n = int(exp["e3_interval"])
+            res["e7"] = {v.name: [{"policy": name, **video_row(runner.run(v, tracker="lk", detect_interval=n, **kw))}
+                                  for name, kw in e7_policies(exp["e7_unconfirmed_intervals"])] for v in videos}
 
     res["peak_rss_mb"] = round(peak_rss_mb(), 1)
     (out / "raw_results.json").write_text(json.dumps(res, indent=1, default=str))

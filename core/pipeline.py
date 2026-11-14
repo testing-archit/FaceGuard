@@ -44,6 +44,8 @@ class RunStats:
     track_seconds: float = 0.0  # tracker updates + association
     redact_seconds: float = 0.0
     detector_calls: int = 0
+    early_detections: int = 0  # unscheduled detector runs (lost track or scene cut)
+    scene_cuts: int = 0
     faces_redacted: int = 0  # sum over frames
     warnings: list[str] = field(default_factory=list)
 
@@ -113,22 +115,85 @@ def _needs_gray(cfg: Config) -> bool:
     return cfg.tracker == "lk" or cfg.detector == "haar"
 
 
+@dataclass
+class FrameSignature:
+    """What scene-cut detection compares between consecutive frames."""
+
+    hist: np.ndarray  # normalised intensity histogram
+    thumb: np.ndarray  # zero-mean, unit-variance grey thumbnail
+
+
+def frame_signature(frame: np.ndarray, cfg: Config, gray: np.ndarray | None = None) -> FrameSignature:
+    """Histogram and normalised thumbnail of a downscaled frame.
+
+    - The histogram ignores where things are, so motion barely changes it,
+      but a global brightness change (a fade, a light switched off) does.
+    - The normalised thumbnail is invariant to brightness and contrast, but
+      large motion (a whip pan) changes it.
+    A real cut changes both, which is why `is_scene_cut` requires both.
+    """
+    g = gray if gray is not None else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    h, w = g.shape[:2]
+    tw = min(cfg.scene_cut_width, w)
+    small = cv2.resize(g, (tw, max(1, round(h * tw / w))), interpolation=cv2.INTER_AREA)
+    hist = cv2.calcHist([small], [0], None, [cfg.scene_cut_bins], [0, 256])
+    thumb = small.astype(np.float32)
+    thumb = (thumb - thumb.mean()) / (thumb.std() + 1e-6)
+    return FrameSignature(cv2.normalize(hist, hist).ravel(), thumb)
+
+
+def is_scene_cut(prev: FrameSignature | None, cur: FrameSignature, cfg: Config) -> bool:
+    """Cut = intensity distribution AND spatial layout both changed."""
+    if prev is None or cfg.scene_cut_corr <= 0:
+        return False
+    hist_corr = cv2.compareHist(prev.hist, cur.hist, cv2.HISTCMP_CORREL)
+    ncc = float((prev.thumb * cur.thumb).mean())
+    return hist_corr < cfg.scene_cut_corr and ncc < cfg.scene_cut_ncc
+
+
 def _run(src: str | Path, cfg: Config, progress: Progress | None, on_frame: FrameHook | None) -> Analysis:
-    """Decode -> (detect every N frames) -> track -> associate, frame by frame."""
+    """Decode -> detect when due -> track -> associate, frame by frame.
+
+    Detection is due on every `detect_interval`-th frame, and also
+    immediately (DECISIONS D-017):
+    - on the frame after any tracker lost its face (`refresh_on_lost`);
+    - every `unconfirmed_interval` frames while a tracked face went unmatched
+      at the last detection: an occluded face's track can be dragged along
+      by whatever passes in front without ever being lost, so the hidden face
+      is re-acquired as soon as it re-emerges, not at the next scheduled frame;
+    - on a scene cut, after ending every live track.
+    """
     detector = make_detector(cfg)
     manager = TrackManager(cfg, tracker_factory(cfg))
     interval = 1 if cfg.tracker == "off" else cfg.detect_interval
     need_gray = _needs_gray(cfg)
     stats = RunStats()
     start = time.perf_counter()
+    prev_sig: FrameSignature | None = None
     with VideoReader(src) as reader:
         stats.warnings += limit_warnings(reader.info)
         total = reader.info.frame_count
         for i, frame in enumerate(reader):
             # Convert once per frame; LK and Haar share it (ARCHITECTURE section 10).
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if need_gray else None
+            cut = False
+            if cfg.scene_cut_corr > 0:
+                sig = frame_signature(frame, cfg, gray)
+                cut = is_scene_cut(prev_sig, sig, cfg)
+                prev_sig = sig
+            if cut:
+                manager.scene_cut(i)
+                stats.scene_cuts += 1
+            due = i % interval == 0
+            early = not due and (
+                cut
+                or (cfg.refresh_on_lost and manager.any_lost)
+                or (cfg.unconfirmed_interval > 0 and i % cfg.unconfirmed_interval == 0
+                    and manager.any_unconfirmed)
+            )
             detections = None
-            if i % interval == 0:
+            if due or early:
+                stats.early_detections += early
                 t0 = time.perf_counter()
                 detections = detector.detect(frame, gray)
                 stats.detect_seconds += time.perf_counter() - t0

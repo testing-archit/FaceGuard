@@ -278,10 +278,16 @@ def track_table(s: st.session_state, frame: int, n_frames: int) -> None:
             t.redact = False
         tracks_changed(s)
         st.rerun()
-    if s.events:
-        with st.expander(f"Suspected ID switches ({len(s.events)})"):
-            st.caption("Two tracks converged on one face; the younger one was merged into the older.")
-            st.table([{"frame": e.frame, "kept": e.kept, "dropped": e.dropped} for e in s.events])
+    merges = [e for e in s.events if e.kind == "duplicate"]
+    cuts = sorted({e.frame for e in s.events if e.kind == "scene_cut"})
+    if merges:
+        with st.expander(f"Suspected ID switches ({len(merges)})"):
+            st.caption("Two tracks converged on one face; the younger one was merged into the older. "
+                       "Check these frames.")
+            st.table([{"frame": e.frame, "kept": e.kept, "dropped": e.dropped} for e in merges])
+    if cuts:
+        st.caption(f"Scene cuts at frame(s) {', '.join(map(str, cuts))}: track numbers restart there, "
+                   "so tick choices must be made again for the new shot.")
 
 
 def manual_box_form(s: st.session_state, cfg: Config, frame_img: np.ndarray, frame: int, n_frames: int) -> Box | None:
@@ -444,7 +450,8 @@ def main() -> None:
         return
     if s.stats is not None:
         st.caption(f"Analysed {s.stats.frames} frames at {s.stats.fps:.0f} FPS, "
-                   f"{s.stats.detector_calls} detector calls, {len(s.tracks)} track(s).")
+                   f"{s.stats.detector_calls} detector calls ({s.stats.early_detections} early, "
+                   f"after a lost track or scene cut), {len(s.tracks)} track(s).")
     if msg := st.session_state.pop("flash", None):
         st.success(msg)
     preview(s, cfg)
