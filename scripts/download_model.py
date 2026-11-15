@@ -1,4 +1,7 @@
-"""Fetch FaceGuard's two detector models and verify them.
+"""Fetch FaceGuard's models and verify them.
+
+    python scripts/download_model.py                   # detectors (committed anyway)
+    python scripts/download_model.py --with-allowlist  # also SFace, for the allow-list
 
 This is the only part of FaceGuard that touches the network, and it runs once
 during setup. Both files are also committed to `models/`, so this script only
@@ -7,10 +10,14 @@ matters if one is missing or corrupted.
 - YuNet ONNX from OpenCV Zoo (MIT licence)
 - Haar frontal-face cascade from the OpenCV repo (Intel licence, see the
   header of the XML). OpenCV 5 wheels no longer bundle the cascades.
+- Optional: SFace face-embedding ONNX from OpenCV Zoo (Apache 2.0), used only
+  by the opt-in allow-list ("keep these people visible"). 38.7 MB, so it is
+  not committed; everything else works without it.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import sys
 import urllib.request
@@ -44,6 +51,18 @@ ASSETS = [
         "haarcascade_frontalface_default.xml",
         sha256="0f7d4527844eb514d4a4948e822da90fbb16a34a0bbbbc6adc6498747a5aafb0",
         size=930_127,
+    ),
+]
+
+
+OPTIONAL = [
+    Asset(
+        name="face_recognition_sface_2021dec.onnx",
+        url="https://media.githubusercontent.com/media/opencv/opencv_zoo/"
+        "26cc381e4d2594bb9f47a26eb8fd96c94a13660d/models/face_recognition_sface/"
+        "face_recognition_sface_2021dec.onnx",
+        sha256="0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+        size=38_696_353,
     ),
 ]
 
@@ -85,8 +104,11 @@ def fetch(asset: Asset) -> bool:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--with-allowlist", action="store_true", help="also fetch the SFace model (38.7 MB)")
+    args = ap.parse_args()
     MODELS.mkdir(parents=True, exist_ok=True)
-    results = [fetch(a) for a in ASSETS]
+    results = [fetch(a) for a in ASSETS + (OPTIONAL if args.with_allowlist else [])]
     return 0 if all(results) else 1
 
 

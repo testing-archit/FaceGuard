@@ -149,6 +149,7 @@ class TrackManager:
         for ti, di in pairs:
             t = self.live[ti]
             t.box = detections[di].box  # re-anchor: resets accumulated drift
+            t.landmarks = detections[di].landmarks
             t.last_seen_frame = i
             t.lost = False
             self._trackers[t.id].init(frame, gray, t.box)
@@ -157,7 +158,8 @@ class TrackManager:
         expired = {self.live[ti].id for ti in unmatched_t if self._expired(self.live[ti], i)}
 
         for di in unmatched_d:
-            t = Track(id=self._next_id, box=detections[di].box, last_seen_frame=i)
+            t = Track(id=self._next_id, box=detections[di].box, last_seen_frame=i,
+                      landmarks=detections[di].landmarks)
             self._next_id += 1
             tracker = self._make_tracker()
             tracker.init(frame, gray, t.box)

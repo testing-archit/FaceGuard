@@ -91,10 +91,10 @@ the CLI.
 
 ## Stretch goals — only if Weeks 1–4 finished early
 
-- [ ] Allow-list via face recognition (SFace embeddings) — "blur everyone but me"
-- [ ] Batch folder processing
-- [ ] Temporal smoothing of box positions to reduce mask jitter
-- [ ] Tiled detection pass for small background faces
+- [x] Allow-list via face recognition (SFace embeddings) — "blur everyone but me" (D-025)
+- [x] Batch folder processing (CLI folders, UI batch tab)
+- [x] Temporal smoothing of box positions to reduce mask jitter (off by default, D-019)
+- [x] Tiled detection pass for small background faces (off by default, D-022)
 
 ---
 

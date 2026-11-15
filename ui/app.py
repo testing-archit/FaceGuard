@@ -48,7 +48,9 @@ from core.review import (  # noqa: E402
     step_to,
     tracks_on_frame,
 )
-from core.types import DETECTORS, Box, Config, Track  # noqa: E402
+from core.recognition import EmbeddingCollector, FaceMatcher, apply_allow_list  # noqa: E402
+from core.recognition import available as allow_available  # noqa: E402
+from core.types import DETECTORS, Box, Config, Detection, Track  # noqa: E402
 from core.video_io import VideoReader, limit_warnings  # noqa: E402
 from ui.components import face_canvas, timeline  # noqa: E402
 
@@ -120,6 +122,10 @@ def state():
         s.editor_version = 0
         s.draft = None
         s.batch = None
+        s.embeddings = {}  # track id -> SFace embedding (memory only, never saved)
+        s.allow_scores = {}  # track id -> best similarity to a reference
+        s.track_refs = {}  # track id -> embedding, from "Keep visible everywhere"
+        s.allow_sig = None
     return s
 
 
@@ -221,6 +227,20 @@ def sidebar() -> Config:
         keep_audio = st.toggle("Keep original audio", value=d.keep_audio,
                                help="Audio is copied unchanged. Voices can identify people.")
 
+        section("Keep visible")
+        allow_threshold = d.allow_threshold
+        if allow_available(d):
+            st.file_uploader("Reference photos", type=[e.lstrip(".") for e in IMAGE_EXTS],
+                             accept_multiple_files=True, key="allow_files",
+                             help="Photos of people who agreed to be shown. Anyone who matches stays visible; "
+                             "everyone else is hidden. Compared on this computer only.")
+            allow_threshold = st.slider("Match strictness", 0.35, 0.8, d.allow_threshold, 0.05,
+                                        help="Similarity needed to count as the same person. Higher is "
+                                        "safer: a wrong match would leave a stranger visible.")
+        else:
+            st.caption("Optional. To leave chosen people visible automatically, run "
+                       "`python scripts/download_model.py --with-allowlist` once.")
+
         st.divider()
         st.button("Reset session", icon=":material/restart_alt:", width="stretch", on_click=reset,
                   help="Deletes the upload, previews and exports from this computer.")
@@ -232,6 +252,7 @@ def sidebar() -> Config:
         pixel_blocks=pixel_blocks, fill_color=fill, detector=detector, conf_threshold=conf,
         tile_grid=SMALL_FACE_TILES if small else 0,
         tracker=tracker, detect_interval=interval, smooth_window=smooth, keep_audio=keep_audio,
+        allow_threshold=allow_threshold,
     )
 
 
@@ -288,12 +309,22 @@ def handle_upload(s) -> None:
     s.editor_version += 1
 
 
+@st.cache_resource(show_spinner=False)
+def get_matcher(path: str) -> FaceMatcher:
+    return FaceMatcher(replace(Config(), recognizer_path=path))
+
+
 def run_analysis(s, cfg: Config) -> None:
+    matcher = get_matcher(cfg.recognizer_path) if allow_available(cfg) else None
+    s.embeddings, s.allow_scores, s.track_refs, s.allow_sig = {}, {}, {}, None
     try:
         if s.kind == "image":
             img = load_image(s.src)
             s.tracks = detections_to_tracks(make_detector(cfg).detect(img))
             s.thumbs = {t.id: crop_thumbnail(img, t.box, THUMB_PX, THUMB_PAD) for t in s.tracks}
+            if matcher is not None:
+                s.embeddings = {t.id: e for t in s.tracks
+                                if (e := matcher.embed(img, Detection(t.box, 1.0, t.landmarks))) is not None}
             s.events, s.stats = [], None
         else:
             bar = st.progress(0.0, text="Detecting and tracking faces")
@@ -303,9 +334,17 @@ def run_analysis(s, cfg: Config) -> None:
                     bar.progress(min(done / total, 1.0), text=f"Detecting and tracking faces · {done} / {total}")
 
             thumbs = ThumbnailCollector()
-            a = analyse_video(s.src, cfg, progress, on_frame=thumbs)
+            embed = EmbeddingCollector(matcher) if matcher is not None else None
+
+            def hooks(i: int, frame: np.ndarray, present: list[Track]) -> None:
+                thumbs(i, frame, present)
+                if embed is not None:
+                    embed(i, frame, present)
+
+            a = analyse_video(s.src, cfg, progress, on_frame=hooks)
             bar.empty()
             s.tracks, s.events, s.stats, s.thumbs = a.tracks, a.events, a.stats, thumbs.thumbs
+            s.embeddings = embed.embeddings if embed is not None else {}
             s.analysis_warnings = a.stats.warnings
         s.analysed_with = analysis_key(cfg)
         s.draft = None
@@ -508,9 +547,54 @@ def people(s, frame: int) -> None:
         st.caption(f"Scene cuts at frame {', '.join(map(str, cuts))}. Numbering restarts after a cut.")
 
 
+def reference_embeddings(s, cfg: Config) -> list[np.ndarray]:
+    """Embeddings of uploaded reference photos (cached per upload) plus people marked in the list."""
+    refs = list(s.track_refs.values())
+    files = s.get("allow_files") or []
+    if files and allow_available(cfg):
+        cache = s.setdefault("ref_cache", {})
+        matcher, det = get_matcher(cfg.recognizer_path), None
+        for f in files:
+            if f.file_id not in cache:
+                det = det or make_detector(replace(cfg, detector="yunet", tile_grid=0))
+                img = cv2.imdecode(np.frombuffer(f.getbuffer(), np.uint8), cv2.IMREAD_COLOR)
+                got = matcher.references([img], det) if img is not None else []
+                cache[f.file_id] = got[0] if got else None
+            if cache[f.file_id] is not None:
+                refs.append(cache[f.file_id])
+    return refs
+
+
+def refresh_allow_list(s, cfg: Config) -> None:
+    """Apply the allow-list when references or strictness change, not on every rerun,
+    so a person the user hides again by hand stays hidden."""
+    files = tuple(f.file_id for f in (s.get("allow_files") or []))
+    sig = (files, tuple(sorted(s.track_refs)), cfg.allow_threshold)
+    if s.tracks is None or not s.embeddings or sig == s.allow_sig:
+        return
+    s.allow_sig = sig
+    refs = reference_embeddings(s, cfg)
+    if not refs:
+        s.allow_scores = {}
+        return
+    before = {t.id for t in s.tracks if not t.redact}
+    matches = apply_allow_list(s.tracks, s.embeddings, refs, cfg.allow_threshold)
+    s.allow_scores = {m.track_id: m.score for m in matches}
+    newly = [t.id for t in s.tracks if not t.redact and t.id not in before]
+    if newly:
+        tracks_changed(s)
+        s.flash = f"Left {len(newly)} matching {'person' if len(newly) == 1 else 'people'} visible"
+
+
+def keep_everywhere(s, tid: int) -> None:
+    """Use this person's face as a reference: they, and later tracks of the same face, stay visible."""
+    if tid in s.embeddings:
+        s.track_refs[tid] = s.embeddings[tid]
+
+
 def person_row(s, t: Track) -> None:
     v = s.editor_version
-    c = st.columns([0.9, 2.6, 1.0, 0.55, 0.55], vertical_alignment="center", gap="small")
+    c = st.columns([0.9, 2.4, 0.9, 0.5, 0.5, 0.5], vertical_alignment="center", gap="small")
     thumb = s.thumbs.get(t.id)
     if thumb is not None:
         c[0].image(rgb(thumb), width=THUMB_SHOW_PX)
@@ -522,6 +606,9 @@ def person_row(s, t: Track) -> None:
     if t.score is not None:
         meta.append(f"confidence {t.score:.2f}")
     flag = f'<span class="fg-flag">{len(t.flags)} to check</span>' if t.flags else ""
+    score = s.allow_scores.get(t.id)
+    if score is not None and score >= s.get("allow_threshold_used", 0.5):
+        flag += f'<span class="fg-match">matches reference {score:.2f}</span>'
     state_cls = "on" if t.redact else "off"
     c[1].markdown(
         f'<div class="fg-person"><b>Person {t.id}</b><div><span class="fg-state {state_cls}">'
@@ -538,7 +625,12 @@ def person_row(s, t: Track) -> None:
         target = min(t.flags) if t.flags else min(t.history)
         c[3].button("", icon=":material/my_location:", key=f"go-{t.id}-{v}", on_click=set_frame, args=(target,),
                     type="tertiary", help="Go to this person (first frame to check, if any)")
-    if c[4].button("", icon=":material/delete:", key=f"del-{t.id}-{v}", type="tertiary",
+    if t.id in s.embeddings:
+        c[4].button("", icon=":material/person_check:", key=f"keep-{t.id}-{v}", type="tertiary",
+                    on_click=keep_everywhere, args=(s, t.id), disabled=t.id in s.track_refs,
+                    help="Keep this person visible everywhere: other tracks of the same face "
+                    "(after occlusion or a scene cut) are matched and shown too")
+    if c[5].button("", icon=":material/delete:", key=f"del-{t.id}-{v}", type="tertiary",
                    help="Remove: not a face"):
         s.tracks = delete_track(s.tracks, t.id)
         tracks_changed(s)
@@ -679,6 +771,13 @@ def export(s, cfg: Config) -> None:
             vi = video_info(s.src)
             info |= {"frames": vi.frame_count, "fps": vi.fps, "size": [vi.width, vi.height]}
         log = redaction_log(s.tracks, cfg, info, s.events)
+        if s.allow_scores:
+            log["allow_list"] = {
+                "references": len(reference_embeddings(s, cfg)),
+                "threshold": cfg.allow_threshold,
+                "matched": sorted(k for k, v in s.allow_scores.items() if v >= cfg.allow_threshold),
+                "note": "Face embeddings are not stored in this log or anywhere else.",
+            }
         left, right = st.columns([3, 2], gap="large")
         with left:
             if s.kind == "video":
@@ -727,6 +826,8 @@ def single(s, cfg: Config) -> None:
     info = file_bar(s, cfg)
     if s.tracks is None:
         return
+    s.allow_threshold_used = cfg.allow_threshold
+    refresh_allow_list(s, cfg)
     if msg := s.pop("flash", None):
         st.toast(msg, icon=":material/check_circle:")
     stats_strip(s)

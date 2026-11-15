@@ -74,6 +74,8 @@ section[data-testid="stSidebar"] .fg-section:first-of-type { margin-top: 0.2rem;
 .fg-state.on { background: var(--fg-accent-soft); color: var(--fg-accent); }
 .fg-state.off { background: var(--fg-warn-soft); color: var(--fg-warn); }
 .fg-flag { background: var(--fg-warn-soft); color: var(--fg-warn); }
+.fg-match { font-size: 0.68rem; font-weight: 600; padding: 1px 6px; border-radius: 10px; white-space: nowrap;
+            background: rgba(79, 70, 229, 0.14); color: #6366f1; }
 .fg-empty { font-size: 0.85rem; color: var(--fg-muted); padding: 12px; border: 1px dashed var(--fg-line);
             border-radius: 8px; }
 div[data-testid="stImage"] img { border-radius: 4px; }

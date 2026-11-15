@@ -37,7 +37,7 @@ STALE_JOB_SECONDS = 6 * 3600  # job folders older than this are from dead sessio
 def detections_to_tracks(detections: list[Detection]) -> list[Track]:
     """Wrap single-image detections as one-frame tracks, numbered from 1."""
     return [
-        Track(id=i, box=d.box, history={0: d.box}, score=d.score)
+        Track(id=i, box=d.box, history={0: d.box}, score=d.score, landmarks=d.landmarks)
         for i, d in enumerate(detections, start=1)
     ]
 

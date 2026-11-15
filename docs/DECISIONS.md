@@ -321,3 +321,27 @@ not show what a lower threshold costs (E4, first run).
 lower value buys nothing on this set. Caveat: the boxes were proposed by
 YuNet and verified by an AI annotator, and the photos are easy (frontal,
 well separated), so a harder set may move the optimum.
+
+## D-025 — Allow-list by face verification (stretch goal), opt-in and local
+**Date:** 2026-11-15
+**Context:** Users often need "hide everyone except the people who agreed".
+CLAUDE.md permits an embedding model only once Weeks 1–4 are complete and the
+Week 5 stretch goals are reached; both now hold.
+**Options:** none (manual unticking only); SFace embeddings from OpenCV Zoo.
+**Decision:** SFace (`face_recognition_sface_2021dec.onnx`, Apache 2.0,
+pinned commit and SHA-256, 38.7 MB, not committed; fetched by
+`download_model.py --with-allowlist`). Faces are aligned with YuNet's five
+landmarks, embedded, and compared by cosine similarity with reference faces
+the user supplies (uploaded photos, or "keep visible everywhere" on a
+detected person). Each video track is embedded from its three largest
+detector-confirmed boxes, averaged. Matching tracks are left visible; the UI
+shows every match score. It is verification against user-supplied
+references, not identification: no names, no database, embeddings only in
+memory, none written to the redaction log.
+**Trade-off:** A false match exposes a stranger, so the default threshold
+is 0.5, stricter than OpenCV's verification default of 0.363; this costs
+some missed matches (a wanted person stays hidden), which is the safe error.
+**Evidence:** addams-family, 7 people: same-person similarity after mirroring
+and 0.8x rescaling 0.86–0.92, different people at most 0.31. Crossing clip:
+the reference for person A matched both of A's tracks (before and after full
+occlusion) at 0.93 and 0.92; all non-matching tracks at most 0.18.

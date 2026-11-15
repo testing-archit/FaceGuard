@@ -26,6 +26,7 @@ def seeded_app(src: Path, kind: str):
     s.job, s.upload_id, s.src, s.kind, s.name = job, "seed", dst, kind, src.stem
     s.tracks, s.analysed_with, s.events, s.stats, s.export, s.editor_version = None, None, [], None, None, 0
     s.thumbs, s.draft, s.batch = {}, None, None
+    s.embeddings, s.allow_scores, s.track_refs, s.allow_sig = {}, {}, {}, None
     return at, job
 
 
@@ -109,5 +110,26 @@ def test_video_scrub_manual_track_export():
         assert not at.exception
         out, mime = at.session_state.export
         assert mime == "video/mp4" and Path(out).stat().st_size > 0
+    finally:
+        remove_job_dir(job)
+
+
+@needs_photo
+def test_keep_visible_everywhere_marks_matching_people():
+    from core.recognition import available
+
+    if not available(__import__("core.types", fromlist=["Config"]).Config()):
+        pytest.skip("python scripts/download_model.py --with-allowlist")
+    at, job = seeded_app(PHOTO, "image")
+    try:
+        at.run()
+        button(at, "Detect faces").click().run()
+        s = at.session_state
+        assert len(s.embeddings) == len(s.tracks)
+        s.track_refs = {1: s.embeddings[1]}  # what the "keep visible everywhere" button does
+        at.run()
+        assert not at.exception
+        assert {t.id for t in s.tracks if not t.redact} == {1}
+        assert s.allow_scores[1] > 0.99 and max(v for k, v in s.allow_scores.items() if k != 1) < 0.5
     finally:
         remove_job_dir(job)

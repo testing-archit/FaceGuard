@@ -13,3 +13,6 @@ data/samples/*
 !data/samples/.gitkeep
 
 .DS_Store
+
+# Optional allow-list model (38.7 MB): scripts/download_model.py --with-allowlist
+models/face_recognition_sface_*.onnx

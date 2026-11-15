@@ -91,6 +91,7 @@ class Track:
     lost: bool = False  # tracker returned None; box is frozen in place
     lost_since: int = 0  # frame the tracker lost it (valid while lost)
     score: float | None = None  # detector confidence, images only (shown in the preview)
+    landmarks: np.ndarray | None = None  # from the last matched detection; for face alignment
     history: dict[int, Box] = field(default_factory=dict)
     # frame -> FLAG_LOST | FLAG_UNCONFIRMED: frames where this box is a guess the
     # detector did not back up. Shown on the UI timeline as "check here".
@@ -103,6 +104,7 @@ class Config:
 
     model_path: str = "models/face_detection_yunet_2026may.onnx"
     haar_path: str = "models/haarcascade_frontalface_default.xml"
+    recognizer_path: str = "models/face_recognition_sface_2021dec.onnx"  # optional (allow-list)
 
     # detection
     detector: str = "yunet"  # yunet | haar
@@ -166,6 +168,10 @@ class Config:
     fill_color: tuple[int, int, int] = (0, 0, 0)  # BGR
     mask_shape: str = "ellipse"  # ellipse (soft, natural) | rect (covers the whole padded box)
     smooth_window: int = 1  # frames; centred moving average of track boxes, 1 = off (D-019)
+
+    # allow-list (D-025): SFace cosine similarity needed to leave a face visible.
+    # Stricter than OpenCV's 0.363: a false match exposes a stranger.
+    allow_threshold: float = 0.5
 
     # io
     keep_audio: bool = False

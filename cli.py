@@ -13,6 +13,8 @@ from pathlib import Path
 from core.errors import IMAGE_EXTS, VIDEO_EXTS, FaceGuardError, media_kind
 from core.pipeline import (
     analyse_image,
+    analyse_video,
+    render_video,
     check_paths,
     process_video,
     read_image,
@@ -43,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--smooth", type=int, default=d.smooth_window, metavar="FRAMES",
                    help="video: centred moving average of boxes over this many frames (1 = off)")
     p.add_argument("--keep-audio", action="store_true", help="mux the original audio back into the output")
+    p.add_argument("--keep-visible", nargs="+", metavar="PHOTO",
+                   help="allow-list: leave people matching these reference photos visible "
+                   "(needs scripts/download_model.py --with-allowlist)")
     p.add_argument("--save-tracks", metavar="JSON", help="video only: write per-frame track boxes for evaluation")
     return p
 
@@ -62,9 +67,33 @@ def config_from_args(args: argparse.Namespace) -> Config:
     )
 
 
-def run_image(src: str, dst: str, cfg: Config) -> None:
+def load_references(paths: list[str] | None, cfg: Config):
+    """Embeddings of the allow-list reference photos, or None when no allow-list."""
+    if not paths:
+        return None
+    from core.detectors import make_detector
+    from core.recognition import FaceMatcher
+
+    matcher = FaceMatcher(cfg)
+    refs = matcher.references([read_image(p) for p in paths], make_detector(cfg))
+    if not refs:
+        raise FaceGuardError("No face found in the --keep-visible photos.")
+    print(f"Allow-list: {len(refs)} reference face(s)")
+    return matcher, refs
+
+
+def run_image(src: str, dst: str, cfg: Config, allow=None) -> None:
     img = read_image(src)
     detections = analyse_image(img, cfg)
+    if allow:
+        from core.recognition import similarity
+
+        matcher, refs = allow
+        kept = [d for d in detections if similarity(matcher.embed(img, d), refs) >= cfg.allow_threshold]
+        if kept:
+            print(f"Leaving {len(kept)} face(s) visible: they match the allow-list")
+        kept_ids = {id(d) for d in kept}
+        detections = [d for d in detections if id(d) not in kept_ids]
     write_image(dst, render_image(img, [d.box for d in detections], cfg))
     if detections:
         print(f"Redacted {len(detections)} face(s) with {cfg.mode} -> {dst}")
@@ -82,8 +111,23 @@ def print_progress(done: int, total: int) -> None:
         print(file=sys.stderr)
 
 
-def run_video(src: str, dst: str, cfg: Config, tracks_path: str | None = None) -> None:
-    analysis = process_video(src, dst, cfg, print_progress)
+def run_video(src: str, dst: str, cfg: Config, tracks_path: str | None = None, allow=None) -> None:
+    if allow:
+        # Decided after analysis, so analyse and render are separate passes.
+        from core.recognition import EmbeddingCollector, apply_allow_list
+
+        matcher, refs = allow
+        collector = EmbeddingCollector(matcher)
+        analysis = analyse_video(src, cfg, print_progress, on_frame=collector)
+        kept = [m for m in apply_allow_list(analysis.tracks, collector.embeddings, refs, cfg.allow_threshold)
+                if m.score >= cfg.allow_threshold]
+        print(f"Allow-list: {len(kept)} track(s) left visible")
+        render = render_video(src, dst, analysis.tracks, cfg, print_progress)
+        analysis.stats.warnings += render.warnings
+        analysis.stats.loop_seconds += render.loop_seconds
+        analysis.stats.total_seconds = analysis.stats.loop_seconds
+    else:
+        analysis = process_video(src, dst, cfg, print_progress)
     stats = analysis.stats
     for w in stats.warnings:
         print(f"warning: {w}", file=sys.stderr)
@@ -117,7 +161,7 @@ def batch_jobs(src_dir: Path, dst_dir: Path) -> list[tuple[Path, Path]]:
     return [(p, dst_dir / p.name) for p in files]
 
 
-def run_batch(src_dir: str, dst_dir: str, cfg: Config) -> int:
+def run_batch(src_dir: str, dst_dir: str, cfg: Config, allow=None) -> int:
     """Redact every file in a folder. One bad file is reported and skipped."""
     jobs = batch_jobs(Path(src_dir), Path(dst_dir))
     Path(dst_dir).mkdir(parents=True, exist_ok=True)
@@ -126,9 +170,9 @@ def run_batch(src_dir: str, dst_dir: str, cfg: Config) -> int:
         print(f"[{k}/{len(jobs)}] {src.name}")
         try:
             if media_kind(src) == "image":
-                run_image(str(src), str(dst), cfg)
+                run_image(str(src), str(dst), cfg, allow)
             else:
-                run_video(str(src), str(dst), cfg)
+                run_video(str(src), str(dst), cfg, allow=allow)
         except FaceGuardError as exc:
             failed += 1
             print(f"  error: {exc}", file=sys.stderr)
@@ -140,13 +184,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         cfg = config_from_args(args)
+        allow = load_references(args.keep_visible, cfg)
         if Path(args.input).is_dir():
-            return run_batch(args.input, args.output, cfg)
+            return run_batch(args.input, args.output, cfg, allow)
         kind = check_paths(args.input, args.output)
         if kind == "image":
-            run_image(args.input, args.output, cfg)
+            run_image(args.input, args.output, cfg, allow)
         else:
-            run_video(args.input, args.output, cfg, args.save_tracks)
+            run_video(args.input, args.output, cfg, args.save_tracks, allow)
     except (FaceGuardError, ValueError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
