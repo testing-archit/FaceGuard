@@ -10,6 +10,8 @@ DETECTORS = ("yunet", "haar")
 TRACKERS = ("lk", "csrt", "kcf", "none", "off")
 MODES = ("blur", "pixelate", "fill")
 SHAPES = ("ellipse", "rect")
+ASSOCIATIONS = ("greedy", "hungarian")
+COAST_MODELS = ("velocity", "kalman")
 FLAG_LOST = "lost"  # tracker lost the face; box frozen at its last position
 FLAG_UNCONFIRMED = "unconfirmed"  # tracker follows it but the last detection missed it
 FLAG_BACKFILL = "backfill"  # box tracked backwards from the first detection (D-026)
@@ -105,6 +107,7 @@ class Config:
 
     model_path: str = "models/face_detection_yunet_2026may.onnx"
     haar_path: str = "models/haarcascade_frontalface_default.xml"
+    profile_path: str = "models/haarcascade_profileface.xml"
     recognizer_path: str = "models/face_recognition_sface_2021dec.onnx"  # optional (allow-list)
 
     # detection
@@ -115,6 +118,11 @@ class Config:
     haar_scale_factor: float = 1.1  # image pyramid step for the cascade
     haar_min_neighbors: int = 5  # overlapping hits needed to accept a face
     min_face_px: int = 24  # Haar minSize; also the "small face" bound
+    # profile fallback (D-032): add Haar profile-cascade hits (both directions) to the detector's
+    profile: bool = False
+    profile_score: float = 0.5  # score given to profile hits; below YuNet's threshold so NMS prefers YuNet
+    profile_min_neighbors: int = 6  # stricter than the frontal cascade: profile hits are noisier
+    profile_nms_iou: float = 0.3  # merge a profile hit into an overlapping detection above this IoU
     tile_grid: int = 0  # 0 = off; n = also detect on n x n overlapping, upscaled tiles (D-022)
     tile_overlap: float = 0.25  # tile overlap, fraction of tile size, so no face is cut by every tile
     tile_scale: float = 2.0  # upscale factor for tiles: a 12 px face is seen at 24 px
@@ -139,12 +147,17 @@ class Config:
     lk_search_min_px: int = 128  # px added to the margin; bounds trackable motion per frame
 
     # association
+    association: str = "greedy"  # greedy | hungarian (optimal total IoU, D-029)
     iou_threshold: float = 0.3  # min IoU to match a detection to a track
     max_misses: int = 15  # frames a LOST track (frozen box) is kept before deletion
     max_unconfirmed: int = 60  # frames a still-tracked track may go without a detector match
     duplicate_iou: float = 0.7  # two tracks above this are the same face
     # coasting (D-023): a LOST track keeps moving at its last velocity, and its mask grows
     coast: bool = False  # off = the lost box stays frozen at its last position
+    coast_model: str = "velocity"  # velocity: decaying EMA velocity | kalman: constant-velocity Kalman (D-030)
+    kalman_process_noise: float = 1.0  # px/frame^2, std of the unmodelled acceleration
+    kalman_measurement_noise: float = 2.0  # px, std of a tracker box centre
+    kalman_sigmas: float = 2.0  # lost mask grows by this many position std devs on each side
     coast_decay: float = 0.9  # per-frame velocity decay while coasting (1 = constant velocity)
     coast_grow: float = 0.04  # per-frame growth of the mask, fraction of box size
     coast_max_scale: float = 1.8  # mask size cap while coasting, multiple of the box size
@@ -177,6 +190,10 @@ class Config:
     # allow-list (D-025): SFace cosine similarity needed to leave a face visible.
     # Stricter than OpenCV's 0.363: a false match exposes a stranger.
     allow_threshold: float = 0.5
+    # re-ID linking (D-031): merge a reappearing face's new track into its old one
+    reid_link: bool = False  # opt-in; needs the SFace model
+    reid_threshold: float = 0.5  # SFace cosine similarity needed to link two tracks
+    reid_max_gap: int = 150  # frames; longest gap between two tracks that may be linked
 
     # self-check (core/verify.py): re-run YuNet on the exported output
     verify_threshold: float = 0.3  # lower than conf_threshold: the check should be the stronger detector
@@ -202,6 +219,10 @@ class Config:
             raise ValueError(f"mask_shape must be one of {SHAPES}, got {self.mask_shape!r}")
         if self.tile_grid < 0 or self.tile_scale < 1:
             raise ValueError("tile_grid must be >= 0 and tile_scale >= 1")
+        if self.association not in ASSOCIATIONS:
+            raise ValueError(f"association must be one of {ASSOCIATIONS}, got {self.association!r}")
+        if self.coast_model not in COAST_MODELS:
+            raise ValueError(f"coast_model must be one of {COAST_MODELS}, got {self.coast_model!r}")
         if self.backfill_frames < 0:
             raise ValueError("backfill_frames must be >= 0")
         if self.smooth_window < 1:

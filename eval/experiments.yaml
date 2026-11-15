@@ -11,7 +11,7 @@ results_md: docs/RESULTS.md
 base_config:
   mode: pixelate
 
-experiments: [e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13]
+experiments: [e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, e15]
 
 videos:
   # Synthetic clips: exact per-frame boxes. Regenerate with scripts/make_*_clip.py.
@@ -45,3 +45,10 @@ e13_settings:                       # E13: attack the redacted output (detect + 
   - {label: "pixelate, 5 blocks", mode: pixelate, pixel_blocks: 5}
   - {label: "pixelate, 3 blocks", mode: pixelate, pixel_blocks: 3}
   - {label: "fill", mode: fill}
+e14_trackers: [lk, kcf]             # E14: association / re-ID / motion-model variants (D-029..D-031)
+e14_variants:
+  - {label: baseline}
+  - {label: Hungarian association, association: hungarian}
+  - {label: re-ID linking, reid_link: true}
+  - {label: "coast, velocity", coast: true}
+  - {label: "coast, Kalman", coast: true, coast_model: kalman}

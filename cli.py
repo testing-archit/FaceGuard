@@ -22,7 +22,7 @@ from core.pipeline import (
     save_tracks,
     write_image,
 )
-from core.types import DETECTORS, MODES, SHAPES, TRACKERS, Config
+from core.types import ASSOCIATIONS, DETECTORS, MODES, SHAPES, TRACKERS, Config
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +46,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="video: centred moving average of boxes over this many frames (1 = off)")
     p.add_argument("--backfill", type=int, default=d.backfill_frames, metavar="FRAMES",
                    help="video: track each new face backwards over this many earlier frames (0 = off)")
+    p.add_argument("--association", choices=ASSOCIATIONS, default=d.association,
+                   help="video: greedy (default) or hungarian (optimal) detection-to-track matching")
+    p.add_argument("--reid", action="store_true",
+                   help="video: re-link a face that reappears after occlusion to its old track by appearance "
+                   "(needs the SFace model)")
+    p.add_argument("--profile", action="store_true",
+                   help="also run the Haar profile-face cascade to catch heads turned sideways (slower)")
     p.add_argument("--keep-audio", action="store_true", help="mux the original audio back into the output")
     p.add_argument("--keep-visible", nargs="+", metavar="PHOTO",
                    help="allow-list: leave people matching these reference photos visible "
@@ -69,6 +76,9 @@ def config_from_args(args: argparse.Namespace) -> Config:
         tile_grid=args.tiles,
         smooth_window=args.smooth,
         backfill_frames=args.backfill,
+        association=args.association,
+        reid_link=args.reid,
+        profile=args.profile,
         keep_audio=args.keep_audio,
     )
 
@@ -149,6 +159,7 @@ def run_video(
     for w in stats.warnings:
         print(f"warning: {w}", file=sys.stderr)
     merges = [e for e in analysis.events if e.kind == "duplicate"]
+    links = [e for e in analysis.events if e.kind == "reid_link"]
     print(
         f"Processed {stats.frames} frames at {stats.fps:.1f} FPS "
         f"({stats.total_seconds:.1f} s total), {len(analysis.tracks)} track(s), "
@@ -157,6 +168,8 @@ def run_video(
     )
     for e in merges:
         print(f"  frame {e.frame}: track {e.dropped} merged into {e.kept}", file=sys.stderr)
+    for e in links:
+        print(f"  frame {e.frame}: track {e.dropped} re-linked to {e.kept} by appearance", file=sys.stderr)
     if tracks_path:
         save_tracks(tracks_path, analysis.tracks, cfg)
     if verify:

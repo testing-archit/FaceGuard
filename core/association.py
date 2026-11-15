@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.motion import KalmanCV
 from core.tracking import Tracker, TrackerFactory
 from core.types import FLAG_LOST, FLAG_UNCONFIRMED, Box, Config, Detection, Track
 
@@ -45,6 +46,81 @@ def greedy_match(
     return pairs, unmatched_t, unmatched_d
 
 
+def hungarian(cost: np.ndarray) -> list[tuple[int, int]]:
+    """Minimum-cost assignment (Kuhn-Munkres with potentials), O(n^2 m).
+
+    The Hungarian method keeps a feasible dual (row potentials u, column
+    potentials v with u_i + v_j <= c_ij) and grows a set of tight edges
+    (u_i + v_j = c_ij) until it contains a perfect matching of the smaller
+    side; any such matching is optimal by LP duality. Rectangular inputs are
+    handled by assigning the shorter side. Returns (row, col) pairs.
+    """
+    n, m = cost.shape
+    if n == 0 or m == 0:
+        return []
+    if n > m:
+        return [(r, c) for c, r in hungarian(cost.T)]
+    INF = float("inf")
+    u = np.zeros(n + 1)
+    v = np.zeros(m + 1)
+    p = np.zeros(m + 1, dtype=int)  # p[j] = row matched to column j (1-based, 0 = free)
+    way = np.zeros(m + 1, dtype=int)
+    for i in range(1, n + 1):
+        p[0] = i
+        j0 = 0
+        minv = np.full(m + 1, INF)
+        used = np.zeros(m + 1, dtype=bool)
+        while True:
+            used[j0] = True
+            i0 = p[j0]
+            delta, j1 = INF, 0
+            for j in range(1, m + 1):
+                if used[j]:
+                    continue
+                cur = cost[i0 - 1, j - 1] - u[i0] - v[j]
+                if cur < minv[j]:
+                    minv[j], way[j] = cur, j0
+                if minv[j] < delta:
+                    delta, j1 = minv[j], j
+            for j in range(m + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while j0:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+    return [(int(p[j]) - 1, j - 1) for j in range(1, m + 1) if p[j]]
+
+
+def hungarian_match(
+    track_boxes: list[Box], det_boxes: list[Box], iou_threshold: float
+) -> tuple[list[tuple[int, int]], list[int], list[int]]:
+    """Globally optimal matching: maximise the total IoU of accepted pairs.
+
+    Same contract as `greedy_match`. Pairs below the threshold are given a
+    cost no real pair can reach, then discarded after assignment, so a weak
+    pair never displaces a strong one (DECISIONS D-029).
+    """
+    if not track_boxes or not det_boxes:
+        return [], list(range(len(track_boxes))), list(range(len(det_boxes)))
+    iou = np.array([[t.iou(d) for d in det_boxes] for t in track_boxes])
+    cost = np.where(iou >= iou_threshold, 1.0 - iou, 2.0)
+    pairs = [(ti, di) for ti, di in hungarian(cost) if iou[ti, di] >= iou_threshold]
+    used_t = {ti for ti, _ in pairs}
+    used_d = {di for _, di in pairs}
+    return (sorted(pairs), [i for i in range(len(track_boxes)) if i not in used_t],
+            [i for i in range(len(det_boxes)) if i not in used_d])
+
+
+MATCHERS = {"greedy": greedy_match, "hungarian": hungarian_match}
+
+
 @dataclass(frozen=True)
 class IdEvent:
     """A suspected identity problem, logged for the evaluation report."""
@@ -52,6 +128,7 @@ class IdEvent:
     frame: int
     kind: str  # "duplicate": two tracks converged on one face, the younger was dropped
     #            "scene_cut": the scene changed, every live track was ended
+    #            "reid_link": a new track matched an ended one by appearance and was merged (D-031)
     kept: int
     dropped: int
 
@@ -78,6 +155,8 @@ class TrackManager:
         self._last_detection: int | None = None
         self._velocity: dict[int, tuple[float, float]] = {}
         self.born: list[Track] = []  # tracks created on the latest step (for backfill)
+        self._kalman: dict[int, KalmanCV] = {}
+        self._use_kalman = cfg.coast and cfg.coast_model == "kalman" and self._follows_motion
 
     def step(
         self, i: int, frame: np.ndarray, gray: np.ndarray, detections: list[Detection] | None
@@ -88,6 +167,8 @@ class TrackManager:
         #    detections are matched against where faces are now.
         for t in self.live:
             box = self._trackers[t.id].update(frame, gray)
+            if self._use_kalman:
+                self._kf(t).predict()
             if box is None:
                 if not t.lost:
                     t.lost, t.lost_since = True, i  # box frozen at its last position ...
@@ -95,6 +176,8 @@ class TrackManager:
                     t.box = self._coast(t)  # ... unless coasting carries it on
             elif not t.lost:
                 self._update_velocity(t, box)
+                if self._use_kalman:
+                    self._kf(t).update(*box.center)
                 t.box = box
 
         matched_ids: set[int] = set()
@@ -144,7 +227,7 @@ class TrackManager:
         self, i: int, frame: np.ndarray, gray: np.ndarray, detections: list[Detection]
     ) -> set[int]:
         cfg = self._cfg
-        pairs, unmatched_t, unmatched_d = greedy_match(
+        pairs, unmatched_t, unmatched_d = MATCHERS[cfg.association](
             [t.box for t in self.live], [d.box for d in detections], cfg.iou_threshold
         )
         matched_ids = set()
@@ -214,12 +297,23 @@ class TrackManager:
         vx, vy = self._velocity.get(t.id, (cx1 - cx0, cy1 - cy0))
         self._velocity[t.id] = (a * (cx1 - cx0) + (1 - a) * vx, a * (cy1 - cy0) + (1 - a) * vy)
 
+    def _kf(self, t: Track) -> KalmanCV:
+        kf = self._kalman.get(t.id)
+        if kf is None:
+            kf = KalmanCV(*t.box.center, self._cfg.kalman_process_noise, self._cfg.kalman_measurement_noise)
+            self._kalman[t.id] = kf
+        return kf
+
     def _coast(self, t: Track) -> Box:
         """Constant-velocity prediction with decay: where the face probably went.
 
+        With the Kalman model the centre is the filter's prediction instead.
         The box keeps its size so it can still be matched by IoU when the
         detector re-finds the face; only the recorded mask grows (`_mask_box`).
         """
+        if self._use_kalman:
+            cx, cy = float(self._kf(t).x[0]), float(self._kf(t).x[1])
+            return Box.from_xywh(cx - t.box.w / 2, cy - t.box.h / 2, t.box.w, t.box.h)
         vx, vy = self._velocity.get(t.id, (0.0, 0.0))
         d = self._cfg.coast_decay
         self._velocity[t.id] = (vx * d, vy * d)
@@ -234,7 +328,13 @@ class TrackManager:
         cfg = self._cfg
         if not (cfg.coast and t.lost and self._follows_motion):
             return t.box
-        scale = min(1.0 + cfg.coast_grow * (i - t.lost_since + 1), cfg.coast_max_scale)
+        if self._use_kalman:
+            # Grow by k position standard deviations on each side: the face is
+            # within that distance of the prediction with high probability.
+            grow = 2 * cfg.kalman_sigmas * self._kf(t).position_std
+            scale = min(1.0 + grow / max(t.box.w, 1), cfg.coast_max_scale)
+        else:
+            scale = min(1.0 + cfg.coast_grow * (i - t.lost_since + 1), cfg.coast_max_scale)
         cx, cy = t.box.center
         w, h = t.box.w * scale, t.box.h * scale
         return Box.from_xywh(cx - w / 2, cy - h / 2, w, h).clip(shape[1], shape[0])
@@ -242,6 +342,7 @@ class TrackManager:
     def _retire(self, t: Track) -> None:
         self.live.remove(t)
         self._trackers.pop(t.id, None)
+        self._kalman.pop(t.id, None)
         self.finished.append(t)
 
     def all_tracks(self) -> list[Track]:

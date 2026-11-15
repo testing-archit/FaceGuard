@@ -28,6 +28,7 @@ from core.backfill import BufferedFrame, FrameBuffer, backfill_track
 from core.detectors import Detector, make_detector
 from core.errors import FaceGuardError, media_kind
 from core.redact import redact
+from core.reid import link_tracks
 from core.smoothing import smooth_tracks
 from core.tracking import tracker_factory
 from core.types import Box, Config, Detection, Track
@@ -51,6 +52,7 @@ class RunStats:
     scene_cuts: int = 0
     faces_redacted: int = 0  # sum over frames
     backfilled_frames: int = 0  # face-frames covered by tracking backwards (D-026)
+    reid_seconds: float = 0.0  # SFace embedding for re-ID linking (D-031)
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -116,7 +118,7 @@ FrameHook = Callable[[int, np.ndarray, list[Track]], None]
 
 
 def _needs_gray(cfg: Config) -> bool:
-    return cfg.tracker == "lk" or cfg.detector == "haar"
+    return cfg.tracker == "lk" or cfg.detector == "haar" or cfg.profile
 
 
 @dataclass
@@ -186,6 +188,11 @@ def _run(
     change, i.e. N frames later; with backfill off that is immediately.
     """
     detector = make_detector(cfg)
+    collector = None
+    if cfg.reid_link:
+        from core.recognition import EmbeddingCollector, FaceMatcher
+
+        collector = EmbeddingCollector(FaceMatcher(cfg))
     make_tracker = tracker_factory(cfg)
     manager = TrackManager(cfg, make_tracker)
     interval = 1 if cfg.tracker == "off" else cfg.detect_interval
@@ -239,6 +246,10 @@ def _run(
                     if t in manager.live:  # not dropped as a duplicate on the same frame
                         stats.backfilled_frames += backfill_track(t, current, past, make_tracker(), cfg, last_cut)
             stats.track_seconds += time.perf_counter() - t0
+            if collector:
+                t0 = time.perf_counter()
+                collector(i, frame, present)
+                stats.reid_seconds += time.perf_counter() - t0
             if on_frame:
                 on_frame(i, frame, present)
             if backfill:
@@ -253,10 +264,14 @@ def _run(
         for bf in buffer.drain():
             finalise_frame(bf)
         info = reader.info
+    tracks, events = manager.all_tracks(), list(manager.events)
+    if collector:
+        tracks, links = link_tracks(tracks, collector.embeddings, cfg)
+        events += [IdEvent(frame=ln.frame, kind="reid_link", kept=ln.kept, dropped=ln.merged) for ln in links]
     stats.loop_seconds = time.perf_counter() - start
     if stats.frames == 0:
         raise FaceGuardError(f"No frames could be decoded from {src}.")
-    return Analysis(info=info, tracks=manager.all_tracks(), events=manager.events, stats=stats)
+    return Analysis(info=info, tracks=tracks, events=events, stats=stats)
 
 
 def analyse_video(

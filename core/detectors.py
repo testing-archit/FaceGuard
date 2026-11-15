@@ -167,12 +167,54 @@ class TiledDetector:
         return nms(dets, cfg.tile_nms_iou)
 
 
+class ProfileFallback:
+    """Adds Haar profile-face hits to another detector's output.
+
+    YuNet misses heads turned past roughly 60 degrees (CLAUDE.md). OpenCV's
+    profile cascade (Viola-Jones, trained on faces looking to one side) is
+    run on the greyscale frame and on its mirror image, so both directions
+    are covered; mirrored hits are flipped back. Hits get `profile_score`,
+    below YuNet's threshold, so in the final non-maximum suppression a YuNet
+    box always wins where both fire and the profile box only fills gaps.
+    Profile hits have no landmarks, so they never feed the allow-list.
+    """
+
+    def __init__(self, base: Detector, cfg: Config) -> None:
+        path = Path(cfg.profile_path)
+        self._cascade = cv2.CascadeClassifier(str(path)) if path.is_file() else None
+        if self._cascade is None or self._cascade.empty():
+            raise FileNotFoundError(
+                f"Profile cascade not found at {path}. Run `python scripts/download_model.py` to restore it."
+            )
+        self._base, self._cfg = base, cfg
+
+    def _profiles(self, gray: np.ndarray) -> list[Box]:
+        cfg = self._cfg
+        eq = cv2.equalizeHist(gray)
+        w = gray.shape[1]
+        kw = dict(scaleFactor=cfg.haar_scale_factor, minNeighbors=cfg.profile_min_neighbors,
+                  minSize=(cfg.min_face_px, cfg.min_face_px))
+        boxes = [Box(*map(int, f)) for f in self._cascade.detectMultiScale(eq, **kw)]
+        for x, y, bw, bh in self._cascade.detectMultiScale(cv2.flip(eq, 1), **kw):
+            boxes.append(Box(int(w - x - bw), int(y), int(bw), int(bh)))
+        return boxes
+
+    def detect(self, frame: np.ndarray, gray: np.ndarray | None = None) -> list[Detection]:
+        dets = list(self._base.detect(frame, gray))
+        if gray is None:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        dets += [Detection(b, self._cfg.profile_score) for b in self._profiles(gray)]
+        return nms(dets, self._cfg.profile_nms_iou)
+
+
 def make_detector(cfg: Config) -> Detector:
-    """Build the detector named by `cfg.detector`, tiled if `cfg.tile_grid` > 0."""
+    """Build the detector named by `cfg.detector`, tiled if `cfg.tile_grid` > 0,
+    with the profile fallback if `cfg.profile`."""
     if cfg.detector == "yunet":
         base: Detector = YuNetDetector(cfg)
     elif cfg.detector == "haar":
         base = HaarDetector(cfg)
     else:
         raise ValueError(f"Unknown detector {cfg.detector!r}")
-    return TiledDetector(base, cfg) if cfg.tile_grid > 0 else base
+    det: Detector = TiledDetector(base, cfg) if cfg.tile_grid > 0 else base
+    return ProfileFallback(det, cfg) if cfg.profile else det

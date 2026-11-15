@@ -8,7 +8,7 @@ during setup. Both files are also committed to `models/`, so this script only
 matters if one is missing or corrupted.
 
 - YuNet ONNX from OpenCV Zoo (MIT licence)
-- Haar frontal-face cascade from the OpenCV repo (Intel licence, see the
+- Haar frontal-face and profile-face cascades from the OpenCV repo (Intel licence, see the
   header of the XML). OpenCV 5 wheels no longer bundle the cascades.
 - Optional: SFace face-embedding ONNX from OpenCV Zoo (Apache 2.0), used only
   by the opt-in allow-list ("keep these people visible"). 38.7 MB, so it is
@@ -51,6 +51,14 @@ ASSETS = [
         "haarcascade_frontalface_default.xml",
         sha256="0f7d4527844eb514d4a4948e822da90fbb16a34a0bbbbc6adc6498747a5aafb0",
         size=930_127,
+    ),
+    Asset(  # optional profile-face fallback (D-032), same licence and commit as above
+        name="haarcascade_profileface.xml",
+        url="https://raw.githubusercontent.com/opencv/opencv/"
+        "b7553d4e2eddc5645023a94a850fe092dd9f223e/data/haarcascades/"
+        "haarcascade_profileface.xml",
+        sha256="b39a4a3be45539db146a7fc1d3e761a292c196eb88421185e6a615b3055e612d",
+        size=828_514,
     ),
 ]
 

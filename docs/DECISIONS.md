@@ -406,3 +406,70 @@ of per-frame detection). It is a detector, not a recogniser, so a pass means
 **Evidence:** default exports of both synthetic clips: 0 residual detections
 on the crossing clip; on the ER clip 160 of 3,600 hidden face-frames are
 still detectable at 5 blocks (416 at 6, 1,355 at the old 8).
+
+## D-029 — Hungarian association offered, greedy stays the default
+**Date:** 2026-11-15
+**Context:** D-009 chose greedy IoU matching and argued it almost always
+agrees with optimal assignment for a handful of faces. That claim is now
+tested rather than assumed.
+**Decision:** `association = "hungarian"` runs Kuhn-Munkres with dual
+potentials (pure NumPy, no SciPy dependency) on cost 1 − IoU; pairs below
+the IoU threshold get a cost no real pair can reach and are dropped after
+assignment. Greedy remains the default.
+**Trade-off:** O(n³) instead of O(n² log n); irrelevant at these sizes.
+**Evidence:** E14: identical leak frames, precision, track counts and ID
+switches to greedy on both clips with LK and KCF. A unit test shows the
+textbook case where greedy strands a track and Hungarian does not; it does
+not occur in our data.
+
+## D-030 — Kalman coasting offered, freeze stays the default
+**Date:** 2026-11-15
+**Context:** D-023's constant-velocity coasting overshot when faces turned.
+A Kalman filter is the standard fix: it estimates velocity with measured
+noise models instead of a hand-tuned decay, and its covariance says how far
+the face may have gone.
+**Decision:** `coast_model = "kalman"` (state centre + velocity,
+white-noise acceleration). While lost, the box follows the prediction and
+the mask grows by 2 position standard deviations per side, capped at
+`coast_max_scale`. Off by default, like all coasting.
+**Trade-off:** none in cost; it simply does not help here.
+**Evidence:** E14. LK never loses a face on either clip, so every motion
+model is identical. With KCF on the ER clip: freeze 0 leak frames,
+velocity coasting 11, Kalman 12. Moving a lost box changes which detection
+it is matched to next, and the frozen box was already where the face
+reappeared. Negative result, kept for the report.
+
+## D-031 — Re-ID linking by appearance, opt-in
+**Date:** 2026-11-15
+**Context:** A fully occluded face comes back with a new track ID (REPORT
+section 8), so a per-person choice silently stops applying to it.
+**Decision:** With `reid_link`, each track's SFace embedding (the same
+collector as the allow-list) is compared with tracks that ended before it
+began; at cosine ≥ 0.5 within 150 frames the later track is merged into
+the earlier. A track ends at its last detector-confirmed frame: an occluded
+face's LK track is dragged along by the occluder for a few frames, and
+those flagged guesses overlap the new track. Merging keeps a track hidden
+if either part was hidden. Links are logged as `reid_link` events.
+**Trade-off:** One SFace embedding per confirmed face (a few ms each).
+A wrong link joins two people under one ID, so making that ID visible
+would expose both; this is why it is opt-in and the links are listed.
+**Evidence:** Crossing clip: the one ID switch is removed with both LK and
+KCF (similarity 0.96), coverage unchanged. ER clip with KCF: 74 links
+(116 → 42 tracks), 1 of them joining two different people (similarity
+0.61; all ER faces are cut from one group photo, an unusually hard case).
+
+## D-032 — Haar profile-face fallback, opt-in
+**Date:** 2026-11-15
+**Context:** YuNet misses heads turned past about 60°. OpenCV ships a
+profile cascade (trained on one direction).
+**Decision:** `profile = true` adds profile-cascade hits on the frame and
+its mirror, scored 0.5 so that YuNet wins every overlap in NMS. The cascade
+is committed in `models/` (828 KB, pinned and hashed like the others).
+**Trade-off:** About 4x detection time per image and extra false
+positives; profile hits have no landmarks, so they never feed the
+allow-list.
+**Evidence:** E15. Our annotated data contains no profile faces, so the
+fallback cannot show a gain here: real photos 76/76 either way; synthetic
+stills gain 0 faces and 6 false positives (minNeighbors 6; 27 at 4, 3 at
+8). Evaluating it needs a profile set (EVALUATION.md section 1 asks for
+one), so it stays off.

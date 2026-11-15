@@ -65,7 +65,7 @@ DEFAULTS = {
     "out": "eval/out",
     "results_md": "docs/RESULTS.md",
     "base_config": {},
-    "experiments": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", "e11", "e12", "e13"],
+    "experiments": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", "e11", "e12", "e13", "e14", "e15"],
     "videos": [],
     "images": {},
     "e1_detectors": ["yunet", "haar"],
@@ -80,6 +80,11 @@ DEFAULTS = {
     "e10_trackers": ["lk", "csrt", "kcf"],
     "e11_tile_grids": [2, 3],
     "e12_backfill": [0, 5, 10, 20],
+    "e14_trackers": ["lk", "kcf"],
+    "e14_variants": [{"label": "baseline"}, {"label": "Hungarian association", "association": "hungarian"},
+                     {"label": "re-ID linking", "reid_link": True},
+                     {"label": "coast, velocity", "coast": True},
+                     {"label": "coast, Kalman", "coast": True, "coast_model": "kalman"}],
     "e13_settings": [{"label": "blur (default 0.35)", "mode": "blur"},
                      {"label": "pixelate (default 8 blocks)", "mode": "pixelate"},
                      {"label": "fill", "mode": "fill"}],
@@ -240,6 +245,7 @@ class VideoRun:
     early_detections: int
     events: int
     backfilled: int = 0
+    reid_links: int = 0
 
     @property
     def fps(self) -> float:
@@ -270,7 +276,8 @@ class Runner:
             fps.append(analysis.stats.fps)
         m = evaluate_video(analysis.tracks, v.truth, v.width, v.height, cfg, v.segments)
         res = VideoRun(fps, m, analysis.tracks, analysis.stats.detector_calls,
-                       analysis.stats.early_detections, len(analysis.events), analysis.stats.backfilled_frames)
+                       analysis.stats.early_detections, len(analysis.events), analysis.stats.backfilled_frames,
+                       sum(e.kind == "reid_link" for e in analysis.events))
         self._cache[key] = res
         label = f"{cfg.detector}/{cfg.tracker}/{cfg.detect_interval}"
         if cfg.tracker != "off" and (not cfg.refresh_on_lost or cfg.unconfirmed_interval != self.base.unconfirmed_interval):
@@ -288,7 +295,7 @@ def video_row(r: VideoRun) -> dict:
         "leak_frames_by_segment": m.leak_frames_by_segment, "mean_coverage": round(m.mean_coverage, 5),
         "precision": round(m.precision, 4), "recall": round(m.recall, 4), "f1": round(m.f1, 4),
         "id_consistency": round(m.id_consistency, 4), "id_switches": m.id_switches,
-        "tracks": m.tracks, "merge_events": r.events, "backfilled_frames": r.backfilled,
+        "tracks": m.tracks, "merge_events": r.events, "backfilled_frames": r.backfilled, "reid_links": r.reid_links,
         "mean_track_frames": round(statistics.mean([len(t.history) for t in r.tracks]), 1) if r.tracks else 0,
     }
 
@@ -759,6 +766,21 @@ def report(res: dict, exp: dict) -> str:
             s += ["Exported clips at the default configuration, every frame re-scanned with YuNet at 0.3:", "",
                   table(["Clip", "Frames", "Hidden face-frames", "Residual detections", "Frames with a residual"],
                         rows), ""]
+    if res.get("e14"):
+        s += [f"## E14 — association, re-ID linking and motion models (detect every {exp['e3_interval']})", "",
+              "Each variant changes one thing from the default (D-029, D-030, D-031). *Links* = tracks merged by "
+              "appearance.", ""]
+        for v, rows_ in res["e14"].items():
+            rows = [[r["tracker"], r["variant"], f"{r['fps']:.1f} ± {r['fps_std']:.1f}", r["leak_frames"],
+                     r["precision"], r["tracks"], r["id_switches"], r["reid_links"]] for r in rows_]
+            s += [f"**{v}**", "", table(["Tracker", "Variant", "FPS", "Leak frames", "Precision", "Tracks",
+                                         "ID switches", "Links"], rows), ""]
+    if res.get("e15"):
+        s += ["## E15 — Haar profile-face fallback", "",
+              "YuNet alone vs YuNet plus the profile cascade run on the frame and its mirror (D-032).", ""]
+        rows = [[r["set"], r["profile"], r["tp"], r["fp"], r["fn"], r["precision"], r["recall"], r["ms_per_image"]]
+                for r in res["e15"]]
+        s += [table(["Set", "Profile", "TP", "FP", "FN", "Precision", "Recall", "ms / image"], rows), ""]
     s.append(END)
     return "\n".join(s)
 
@@ -901,6 +923,26 @@ def main(argv: list[str] | None = None) -> int:
             res["e13"] = e13_output_check(real, base, exp["e13_settings"])
             if videos:
                 res["e13"]["videos"] = e13_videos(videos, runner, n)
+
+        if videos and "e14" in todo:
+            print("E14 association, re-ID and motion models", flush=True)
+            from core.recognition import available
+
+            variants = [vt for vt in exp["e14_variants"] if not vt.get("reid_link") or available(base)]
+            res["e14"] = {v.name: [{"tracker": t, "variant": vt["label"],
+                                    **video_row(runner.run(v, tracker=t, detect_interval=n,
+                                                           **{k: x for k, x in vt.items() if k != "label"}))}
+                                   for t in exp["e14_trackers"] for vt in variants] for v in videos}
+        if images and "e15" in todo:
+            print("E15 profile fallback", flush=True)
+            res["e15"] = []
+            for src, items in (("real photos", real), ("synthetic stills", synth)):
+                for prof in (False, True):
+                    if not items:
+                        continue
+                    r = e1_images(items, replace(base, profile=prof), ["yunet"])["yunet"]
+                    res["e15"].append({"set": src, "profile": "on" if prof else "off",
+                                       **{k: r[k] for k in ("tp", "fp", "fn", "precision", "recall", "ms_per_image")}})
 
     res["peak_rss_mb"] = round(peak_rss_mb(), 1)
     (out / "raw_results.json").write_text(json.dumps(res, indent=1, default=str))
