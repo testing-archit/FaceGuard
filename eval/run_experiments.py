@@ -65,7 +65,7 @@ DEFAULTS = {
     "out": "eval/out",
     "results_md": "docs/RESULTS.md",
     "base_config": {},
-    "experiments": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", "e11", "e12", "e13", "e14", "e15"],
+    "experiments": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", "e11", "e12", "e13", "e14", "e15", "e16"],
     "videos": [],
     "images": {},
     "e1_detectors": ["yunet", "haar"],
@@ -382,6 +382,73 @@ def e6_padding(v: VideoSet, run: VideoRun, base: Config, paddings: list[float]) 
         rows.append({"padding": p, "mean_coverage": round(m.mean_coverage, 5), "leak_frames": m.leak_frames,
                      "mask_area_ratio": round(mask_area_ratio(sample, v.width, v.height, cfg), 3)})
     return rows
+
+
+# --- E16 degradations ------------------------------------------------------
+# Each takes a BGR frame (and a seeded RNG) and returns the degraded frame.
+DARK_GAIN = 0.3  # low light: keep 30% of the brightness ...
+DARK_NOISE = 6.0  # ... plus sensor noise, std in grey levels
+JPEG_QUALITY = 12  # heavy compression: blocking and ringing
+MOTION_BLUR_PX = 11  # horizontal motion-blur kernel length
+DOWNSCALE = 0.5  # resolution halved; faces are half as wide
+
+
+def _low_light(f: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    noisy = f.astype(np.float32) * DARK_GAIN + rng.normal(0, DARK_NOISE, f.shape)
+    return np.clip(noisy, 0, 255).astype(np.uint8)
+
+
+def _jpeg(f: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    return cv2.imdecode(cv2.imencode(".jpg", f, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])[1], cv2.IMREAD_COLOR)
+
+
+def _motion_blur(f: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    k = np.zeros((MOTION_BLUR_PX, MOTION_BLUR_PX), np.float32)
+    k[MOTION_BLUR_PX // 2, :] = 1.0 / MOTION_BLUR_PX
+    return cv2.filter2D(f, -1, k)
+
+
+def _downscale(f: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    return cv2.resize(f, None, fx=DOWNSCALE, fy=DOWNSCALE, interpolation=cv2.INTER_AREA)
+
+
+DEGRADATIONS = {"low light": _low_light, "JPEG q12": _jpeg, "motion blur": _motion_blur, "half resolution": _downscale}
+
+
+def degrade_video(v: VideoSet, name: str, tmp: Path) -> VideoSet:
+    """Write a degraded copy of a clip and scale its ground truth to match."""
+    from core.video_io import VideoWriter, VideoInfo
+
+    fn = DEGRADATIONS[name]
+    rng = np.random.default_rng(0)
+    out = tmp / f"{v.name}-{name.replace(' ', '_')}.silent.mp4"
+    scale = DOWNSCALE if fn is _downscale else 1.0
+    with VideoReader(v.path) as r:
+        info = r.info
+        w, h = round(info.width * scale), round(info.height * scale)
+        writer = cv2.VideoWriter(str(out), cv2.VideoWriter_fourcc(*"mp4v"), info.fps, (w, h))
+        for frame in r:
+            writer.write(fn(frame, rng))
+        writer.release()
+    truth = {f: [(pid, Box.from_xywh(*(c * scale for c in b.as_list()))) for pid, b in faces]
+             for f, faces in v.truth.items()}
+    return VideoSet(name=f"{v.name} / {name}", path=out, truth=truth, width=w, height=h, frames=v.frames,
+                    segments=v.segments, synthetic=v.synthetic)
+
+
+def e16_robustness(videos: list[VideoSet], runner: Runner, n: int) -> dict:
+    """E16: default pipeline on degraded copies of each clip (low light, compression, blur, resolution)."""
+    out = {}
+    for v in videos:
+        rows = [{"condition": "original", **video_row(runner.run(v, tracker="lk", detect_interval=n))}]
+        for name in DEGRADATIONS:
+            dv = degrade_video(v, name, runner.tmp)
+            rows.append({"condition": name, **video_row(runner.run(dv, tracker="lk", detect_interval=n))})
+            off = runner.run(dv, tracker="off")
+            rows[-1]["leak_frames_per_frame_detection"] = off.metrics.leak_frames
+            rows[-1]["recall_per_frame_detection"] = round(off.metrics.recall, 4)
+        out[v.name] = rows
+    return out
 
 
 SFACE_MATCH = 0.363  # OpenCV's SFace same-person cosine threshold
@@ -781,6 +848,18 @@ def report(res: dict, exp: dict) -> str:
         rows = [[r["set"], r["profile"], r["tp"], r["fp"], r["fn"], r["precision"], r["recall"], r["ms_per_image"]]
                 for r in res["e15"]]
         s += [table(["Set", "Profile", "TP", "FP", "FN", "Precision", "Recall", "ms / image"], rows), ""]
+    if res.get("e16"):
+        s += [f"## E16 — robustness to degraded video (LK, detect every {exp['e3_interval']})", "",
+              f"Each clip re-encoded with one degradation: low light ({DARK_GAIN:.0%} brightness + noise "
+              f"σ {DARK_NOISE:g}), JPEG quality {JPEG_QUALITY} per frame, {MOTION_BLUR_PX} px horizontal motion "
+              f"blur, and half resolution (ground truth scaled). *Per-frame* columns are the no-tracking "
+              "baseline on the same degraded clip.", ""]
+        for v, rows_ in res["e16"].items():
+            rows = [[r["condition"], f"{r['fps']:.1f}", r["leak_frames"], round(r["mean_coverage"], 4), r["recall"],
+                     r.get("leak_frames_per_frame_detection", "—"), r.get("recall_per_frame_detection", "—")]
+                    for r in rows_]
+            s += [f"**{v}**", "", table(["Condition", "FPS", "Leak frames", "Mean coverage", "Box recall",
+                                         "Leak frames (per-frame)", "Recall (per-frame)"], rows), ""]
     s.append(END)
     return "\n".join(s)
 
@@ -943,6 +1022,10 @@ def main(argv: list[str] | None = None) -> int:
                     r = e1_images(items, replace(base, profile=prof), ["yunet"])["yunet"]
                     res["e15"].append({"set": src, "profile": "on" if prof else "off",
                                        **{k: r[k] for k in ("tp", "fp", "fn", "precision", "recall", "ms_per_image")}})
+
+        if videos and "e16" in todo:
+            print("E16 robustness", flush=True)
+            res["e16"] = e16_robustness(videos, runner, n)
 
     res["peak_rss_mb"] = round(peak_rss_mb(), 1)
     (out / "raw_results.json").write_text(json.dumps(res, indent=1, default=str))
