@@ -345,3 +345,27 @@ some missed matches (a wanted person stays hidden), which is the safe error.
 and 0.8x rescaling 0.86–0.92, different people at most 0.31. Crossing clip:
 the reference for person A matched both of A's tracks (before and after full
 occlusion) at 0.93 and 0.92; all non-matching tracks at most 0.18.
+
+## D-026 — Backfill new faces by tracking backwards, on by default
+**Date:** 2026-11-15
+**Context:** A face that enters between two scheduled detections stays
+visible until the next detection runs: 8 leaked frames on the crossing clip
+at N = 10 (REPORT section 8, "entry exposure"). Detecting more often only
+shrinks the gap and costs FPS.
+**Options:** detect every frame near the frame edges; detect more often;
+keep the last few frames in memory and, when a face is first detected, run
+the tracker backwards over them.
+**Decision:** Backfill. The pipeline holds the last `backfill_frames`
+(default 10, matching the default detection interval) frames; each new
+track is initialised on its first detection and tracked newest-to-oldest
+until the tracker loses it, less than half the box is inside the frame, a
+scene cut is reached, or the track already has a box. The single-pass CLI
+writer runs that many frames behind the analysis, so the output video
+contains the backfilled masks without a second decode. Backfilled boxes are
+flagged "backfill" for review (amber on the UI timeline).
+**Trade-off:** Memory for N decoded frames (about 60 MB at 1080p for
+N = 10), a little FPS, and a slightly lower box precision: backfilled boxes
+follow a face slightly before the ground truth counts it as visible.
+**Evidence:** E12. Crossing clip at N = 10: entry leak frames 8 → 0 with 18
+frames filled; precision 0.944 → 0.935. The ER clip has no late entries and
+is unchanged (0 frames filled).

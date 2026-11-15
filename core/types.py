@@ -12,6 +12,7 @@ MODES = ("blur", "pixelate", "fill")
 SHAPES = ("ellipse", "rect")
 FLAG_LOST = "lost"  # tracker lost the face; box frozen at its last position
 FLAG_UNCONFIRMED = "unconfirmed"  # tracker follows it but the last detection missed it
+FLAG_BACKFILL = "backfill"  # box tracked backwards from the first detection (D-026)
 
 
 @dataclass(frozen=True)
@@ -152,6 +153,10 @@ class Config:
     refresh_on_lost: bool = True  # ... a tracker has lost its face
     unconfirmed_interval: int = 3  # ... every N frames while a tracked face went unmatched by the
     #                                 last detection (tracker and detector disagree); 0 disables
+    # backfill (D-026): when a face is first detected, track it backwards over the
+    # last N buffered frames so the frames before its first detection are masked too
+    backfill_frames: int = 10  # 0 = off; frames held in memory (>= detect_interval covers entry gaps)
+    backfill_min_visible: float = 0.5  # stop once less than this share of the box is inside the frame
     # scene cuts: a cut needs BOTH a different intensity histogram and a different layout
     scene_cut_corr: float = 0.5  # grey-histogram correlation below this; 0 disables cut detection
     scene_cut_ncc: float = 0.3  # thumbnail normalised cross-correlation below this
@@ -193,5 +198,7 @@ class Config:
             raise ValueError(f"mask_shape must be one of {SHAPES}, got {self.mask_shape!r}")
         if self.tile_grid < 0 or self.tile_scale < 1:
             raise ValueError("tile_grid must be >= 0 and tile_scale >= 1")
+        if self.backfill_frames < 0:
+            raise ValueError("backfill_frames must be >= 0")
         if self.smooth_window < 1:
             raise ValueError("smooth_window must be >= 1")

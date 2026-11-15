@@ -44,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="mask shape: soft ellipse, or rect to hide the whole padded box")
     p.add_argument("--smooth", type=int, default=d.smooth_window, metavar="FRAMES",
                    help="video: centred moving average of boxes over this many frames (1 = off)")
+    p.add_argument("--backfill", type=int, default=d.backfill_frames, metavar="FRAMES",
+                   help="video: track each new face backwards over this many earlier frames (0 = off)")
     p.add_argument("--keep-audio", action="store_true", help="mux the original audio back into the output")
     p.add_argument("--keep-visible", nargs="+", metavar="PHOTO",
                    help="allow-list: leave people matching these reference photos visible "
@@ -63,6 +65,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         mask_shape=args.shape,
         tile_grid=args.tiles,
         smooth_window=args.smooth,
+        backfill_frames=args.backfill,
         keep_audio=args.keep_audio,
     )
 

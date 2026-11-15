@@ -77,11 +77,13 @@ class TrackManager:
         self._next_id = 1
         self._last_detection: int | None = None
         self._velocity: dict[int, tuple[float, float]] = {}
+        self.born: list[Track] = []  # tracks created on the latest step (for backfill)
 
     def step(
         self, i: int, frame: np.ndarray, gray: np.ndarray, detections: list[Detection] | None
     ) -> list[Track]:
         """Advance all tracks to frame `i`; return the tracks present on it."""
+        self.born = []
         # 1. Propagate every track to this frame first (DECISIONS D-008), so
         #    detections are matched against where faces are now.
         for t in self.live:
@@ -165,6 +167,7 @@ class TrackManager:
             tracker.init(frame, gray, t.box)
             self._trackers[t.id] = tracker
             self.live.append(t)
+            self.born.append(t)
             matched_ids.add(t.id)
 
         expired |= self._merge_duplicates(i)

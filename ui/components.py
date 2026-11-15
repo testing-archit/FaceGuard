@@ -244,7 +244,7 @@ export default function (component) {
       }
       for (const [a, b, kind] of r.flags) {
         el('rect', { x: x(a), y: y + LANE - 4, width: Math.max(x(b + 1) - x(a), 1.5), height: 4,
-                     fill: kind === 'lost' ? '#dc2626' : '#ef4444', opacity: 0.95 });
+                     fill: kind === 'lost' ? '#dc2626' : (kind === 'backfill' ? '#f59e0b' : '#ef4444'), opacity: 0.95 });
       }
     });
     for (const c of data.cuts) {

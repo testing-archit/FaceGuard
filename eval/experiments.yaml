@@ -11,7 +11,7 @@ results_md: docs/RESULTS.md
 base_config:
   mode: pixelate
 
-experiments: [e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11]
+experiments: [e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12]
 
 videos:
   # Synthetic clips: exact per-frame boxes. Regenerate with scripts/make_*_clip.py.
@@ -37,3 +37,4 @@ e8_paddings: [0.0, 0.1, 0.2, 0.25]  # E8: ellipse vs rectangle mask
 e9_windows: [1, 3, 5, 9]            # E9: smoothing window (frames)
 e10_trackers: [lk, csrt, kcf]       # E10: freeze vs coast when lost
 e11_tile_grids: [2, 3]              # E11: tiled detection on the real photos
+e12_backfill: [0, 5, 10, 20]        # E12: frames tracked backwards from a new face (D-026)

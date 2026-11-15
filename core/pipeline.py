@@ -7,8 +7,9 @@ Images go straight through detect -> redact. For video:
 - `render_video` decodes again and replays the stored boxes of the selected
   tracks. It never re-runs detection, so the IDs the user toggled are exactly
   the IDs rendered (DECISIONS D-010).
-- `process_video` does both in one pass for the CLI. This is valid because
-  every box at frame i is decided causally at frame i.
+- `process_video` does both in one pass for the CLI. Every box at frame i
+  is final once frame i + `backfill_frames` has been analysed, so the writer
+  simply runs that many frames behind the analysis.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import cv2
 import numpy as np
 
 from core.association import IdEvent, TrackManager
+from core.backfill import BufferedFrame, FrameBuffer, backfill_track
 from core.detectors import Detector, make_detector
 from core.errors import FaceGuardError, media_kind
 from core.redact import redact
@@ -48,6 +50,7 @@ class RunStats:
     early_detections: int = 0  # unscheduled detector runs (lost track or scene cut)
     scene_cuts: int = 0
     faces_redacted: int = 0  # sum over frames
+    backfilled_frames: int = 0  # face-frames covered by tracking backwards (D-026)
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -152,7 +155,20 @@ def is_scene_cut(prev: FrameSignature | None, cur: FrameSignature, cfg: Config) 
     return hist_corr < cfg.scene_cut_corr and ncc < cfg.scene_cut_ncc
 
 
-def _run(src: str | Path, cfg: Config, progress: Progress | None, on_frame: FrameHook | None) -> Analysis:
+FinalHook = Callable[[int, np.ndarray, list[Box]], None]  # (frame, pixels, boxes to redact)
+
+
+def _redact_boxes(tracks: list[Track], j: int) -> list[Box]:
+    return [t.history[j] for t in tracks if t.redact and j in t.history]
+
+
+def _run(
+    src: str | Path,
+    cfg: Config,
+    progress: Progress | None,
+    on_frame: FrameHook | None,
+    on_final: FinalHook | None = None,
+) -> Analysis:
     """Decode -> detect when due -> track -> associate, frame by frame.
 
     Detection is due on every `detect_interval`-th frame, and also
@@ -163,14 +179,28 @@ def _run(src: str | Path, cfg: Config, progress: Progress | None, on_frame: Fram
       by whatever passes in front without ever being lost, so the hidden face
       is re-acquired as soon as it re-emerges, not at the next scheduled frame;
     - on a scene cut, after ending every live track.
+
+    With `backfill_frames > 0` the last N frames are held in memory and each
+    newly detected face is tracked backwards into them (core/backfill.py,
+    D-026). `on_final(j, frame, boxes)` is called once frame j can no longer
+    change, i.e. N frames later; with backfill off that is immediately.
     """
     detector = make_detector(cfg)
-    manager = TrackManager(cfg, tracker_factory(cfg))
+    make_tracker = tracker_factory(cfg)
+    manager = TrackManager(cfg, make_tracker)
     interval = 1 if cfg.tracker == "off" else cfg.detect_interval
     need_gray = _needs_gray(cfg)
+    backfill = cfg.backfill_frames if cfg.tracker != "off" else 0
+    buffer = FrameBuffer(backfill)
+    last_cut = 0
     stats = RunStats()
     start = time.perf_counter()
     prev_sig: FrameSignature | None = None
+
+    def finalise_frame(bf: BufferedFrame) -> None:
+        if on_final:
+            on_final(bf.index, bf.frame, _redact_boxes(manager.live + manager.finished, bf.index))
+
     with VideoReader(src) as reader:
         stats.warnings += limit_warnings(reader.info)
         total = reader.info.frame_count
@@ -185,6 +215,7 @@ def _run(src: str | Path, cfg: Config, progress: Progress | None, on_frame: Fram
             if cut:
                 manager.scene_cut(i)
                 stats.scene_cuts += 1
+                last_cut = i
             due = i % interval == 0
             early = not due and (
                 cut
@@ -201,12 +232,26 @@ def _run(src: str | Path, cfg: Config, progress: Progress | None, on_frame: Fram
                 stats.detector_calls += 1
             t0 = time.perf_counter()
             present = manager.step(i, frame, gray, detections)
+            current = BufferedFrame(i, frame, gray)
+            if backfill and manager.born:
+                past = buffer.newest_first()
+                for t in manager.born:
+                    if t in manager.live:  # not dropped as a duplicate on the same frame
+                        stats.backfilled_frames += backfill_track(t, current, past, make_tracker(), cfg, last_cut)
             stats.track_seconds += time.perf_counter() - t0
             if on_frame:
                 on_frame(i, frame, present)
+            if backfill:
+                done = buffer.push(current)
+                if done is not None:
+                    finalise_frame(done)
+            else:
+                finalise_frame(current)
             stats.frames += 1
             if progress:
                 progress(i + 1, total)
+        for bf in buffer.drain():
+            finalise_frame(bf)
         info = reader.info
     stats.loop_seconds = time.perf_counter() - start
     if stats.frames == 0:
@@ -289,15 +334,14 @@ def process_video(
     faces = 0
     with VideoWriter(dst, info) as writer:
 
-        def write(i: int, frame: np.ndarray, present: list[Track]) -> None:
+        def write(i: int, frame: np.ndarray, boxes: list[Box]) -> None:
             nonlocal redact_time, faces
-            boxes = [t.box for t in present if t.redact]
             t0 = time.perf_counter()
             writer.write(redact(frame, boxes, cfg))
             redact_time += time.perf_counter() - t0
             faces += len(boxes)
 
-        analysis = _run(src, cfg, progress, on_frame=write)
+        analysis = _run(src, cfg, progress, on_frame=None, on_final=write)
     analysis.stats.redact_seconds = redact_time
     analysis.stats.faces_redacted = faces
     analysis.stats.warnings += finalise(writer.path, dst, src if cfg.keep_audio else None)
