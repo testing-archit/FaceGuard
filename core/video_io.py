@@ -69,6 +69,18 @@ class VideoReader:
             return True
         return bool(self._cap.set(cv2.CAP_PROP_POS_FRAMES, index))
 
+    def skip(self, n: int) -> bool:
+        """Advance exactly `n` frames by decoding them without converting them.
+
+        Slower than `seek`, but exact: container seeking can land on the
+        wrong frame in files with irregular timestamps (measured on a
+        stream-looped MP4, D-036), which would shift every box in time.
+        """
+        for _ in range(n):
+            if not self._cap.grab():
+                return False
+        return True
+
     def __iter__(self) -> Iterator[np.ndarray]:
         while True:
             ok, frame = self._cap.read()

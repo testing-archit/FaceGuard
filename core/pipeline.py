@@ -174,6 +174,8 @@ def _run(
     progress: Progress | None,
     on_frame: FrameHook | None,
     on_final: FinalHook | None = None,
+    first: int = 0,
+    stop: int | None = None,
 ) -> Analysis:
     """Decode -> detect when due -> track -> associate, frame by frame.
 
@@ -190,6 +192,9 @@ def _run(
     newly detected face is tracked backwards into them (core/backfill.py,
     D-026). `on_final(j, frame, boxes)` is called once frame j can no longer
     change, i.e. N frames later; with backfill off that is immediately.
+
+    `first` / `stop` restrict the run to frames [first, stop) with absolute
+    frame numbers, which is how core/parallel.py splits a video into chunks.
     """
     detector = make_detector(cfg)
     collector = None
@@ -203,7 +208,7 @@ def _run(
     need_gray = _needs_gray(cfg)
     backfill = cfg.backfill_frames if cfg.tracker != "off" else 0
     buffer = FrameBuffer(backfill)
-    last_cut = 0
+    last_cut = first
     stats = RunStats()
     start = time.perf_counter()
     prev_sig: FrameSignature | None = None
@@ -219,7 +224,11 @@ def _run(
     with VideoReader(src) as reader:
         stats.warnings += limit_warnings(reader.info)
         total = reader.info.frame_count
-        for i, frame in enumerate(reader):
+        if first and not reader.skip(first):
+            raise FaceGuardError(f"Could not reach frame {first} in {src}.")
+        for i, frame in enumerate(reader, start=first):
+            if stop is not None and i >= stop:
+                break
             # Convert once per frame; LK and Haar share it (ARCHITECTURE section 10).
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if need_gray else None
             cut = False
@@ -233,7 +242,7 @@ def _run(
                     text.end_all()
                 stats.scene_cuts += 1
                 last_cut = i
-            due = i % interval == 0
+            due = (i - first) % interval == 0
             early = not due and (
                 cut
                 or (cfg.refresh_on_lost and manager.any_lost)

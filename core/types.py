@@ -208,6 +208,9 @@ class Config:
     text_padding: float = 0.15  # per side, rectangular mask
     text_iou: float = 0.3  # match a text box to the previous detection's in video
 
+    # parallel analysis (core/parallel.py, D-036)
+    parallel_warmup: int = 30  # frames each chunk starts early so tracks exist at its boundary
+
     # self-check (core/verify.py): re-run YuNet on the exported output
     verify_threshold: float = 0.3  # lower than conf_threshold: the check should be the stronger detector
     verify_every: int = 1  # video: check every N-th output frame

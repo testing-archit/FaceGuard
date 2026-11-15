@@ -32,6 +32,8 @@ from core.pipeline import analyse_video, boxes_at, render_frame, render_video, t
 from core.text import TEXT_SOURCE, TextDetector  # noqa: E402
 from core.verify import verify_image, verify_video  # noqa: E402
 from core.review import (  # noqa: E402
+    session_from_json,
+    session_to_json,
     ThumbnailCollector,
     crop_thumbnail,
     delete_track,
@@ -432,7 +434,33 @@ def file_bar(s, cfg: Config):
     if info is not None:
         for w in limit_warnings(info) + s.get("analysis_warnings", []):
             st.warning(w, icon=":material/warning:")
+    session_panel(s, cfg)
     return info
+
+
+def session_panel(s, cfg: Config) -> None:
+    """Save the review to continue later, or load a saved one for this file."""
+    with st.expander("Save or resume a review", icon=":material/bookmark:"):
+        st.caption("Saves every box, your hide/show choices and manual boxes for this exact file. "
+                   "No images or face data are stored.")
+        c = st.columns(2)
+        if s.tracks is not None:
+            data = session_to_json(s.tracks, s.src, dict(zip(ANALYSIS_KEYS, analysis_key(cfg))))
+            c[0].download_button("Save review", json.dumps(data), file_name=f"{s.name}.faceguard.json",
+                                 mime="application/json", icon=":material/download:", width="stretch")
+        up = c[1].file_uploader("Resume", type=["json"], key=f"session-{s.upload_id}",
+                                label_visibility="collapsed")
+        if up is not None and s.get("session_loaded") != up.file_id:
+            try:
+                tracks, used = session_from_json(json.loads(up.getvalue()), s.src)
+            except (FaceGuardError, ValueError) as exc:
+                st.error(str(exc))
+                return
+            s.tracks, s.events, s.stats, s.draft = tracks, [], None, None
+            s.analysed_with = tuple(used.get(k) for k in ANALYSIS_KEYS)
+            s.session_loaded = up.file_id
+            tracks_changed(s)
+            st.rerun()
 
 
 def stats_strip(s) -> None:
@@ -499,8 +527,14 @@ def frame_controls(s, n_frames: int, fps: float) -> int:
 
 
 def editor(s, cfg: Config, base: np.ndarray, frame: int) -> None:
-    view = st.segmented_control("View", ["Edit", "Preview", "Original"], default="Edit", key="view",
+    view = st.segmented_control("View", ["Edit", "Preview", "Original", "Compare"], default="Edit", key="view",
                                 label_visibility="collapsed") or "Edit"
+    if view == "Compare":
+        left, right = st.columns(2, gap="small")
+        left.image(rgb(base), caption="Original", width="stretch")
+        right.image(rgb(render_frame(base, boxes_at(s.tracks, frame), text_boxes_at(s.tracks, frame), cfg)),
+                    caption="Export", width="stretch")
+        return
     if view == "Preview":
         shown = render_frame(base, boxes_at(s.tracks, frame), text_boxes_at(s.tracks, frame), cfg)
         hint = "Preview of the exported result."

@@ -338,3 +338,40 @@ def redaction_log(tracks: list[Track], cfg: Config, media: dict, events: list | 
         ],
         "scene_cuts": sorted({e.frame for e in (events or []) if e.kind == "scene_cut"}),
     }
+
+
+SESSION_VERSION = 1
+
+
+def file_sha256(path: str | Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def session_to_json(tracks: list[Track], src: str | Path, analysed_with: dict) -> dict:
+    """A resumable review: every track with its boxes, flags and hide/show choice.
+
+    Bound to the source file by SHA-256 so it cannot be applied to another
+    video by mistake. Contains no pixels and no face embeddings (the
+    allow-list is re-run from references after loading, D-025).
+    """
+    from core.pipeline import tracks_to_json
+
+    return {"faceguard_session": SESSION_VERSION, "source_sha256": file_sha256(src),
+            "analysed_with": analysed_with, **tracks_to_json(tracks)}
+
+
+def session_from_json(data: dict, src: str | Path) -> tuple[list[Track], dict]:
+    """Tracks and the detection settings they were made with. Raises on a mismatch."""
+    from core.pipeline import tracks_from_json
+
+    if not isinstance(data, dict) or data.get("faceguard_session") != SESSION_VERSION:
+        raise FaceGuardError("Not a FaceGuard review file.")
+    if data.get("source_sha256") != file_sha256(src):
+        raise FaceGuardError("This review was saved for a different file.")
+    return tracks_from_json(data), data.get("analysed_with", {})

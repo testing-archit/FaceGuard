@@ -144,3 +144,25 @@ def test_redaction_log_has_no_pixels_and_summarises():
     assert log["summary"] == {"regions": 2, "redacted": 1, "left_visible": [2], "manual": [2], "frames_to_review": 1}
     assert log["regions"][0]["frames"] == [[0, 1]] and log["regions"][0]["flagged"] == [[1, 1, "lost"]]
     assert "model_path" not in log["settings"]
+
+
+def test_session_round_trip_and_binding(tmp_path):
+    from core.errors import FaceGuardError
+    from core.review import session_from_json, session_to_json
+    from core.types import Box, Track
+
+    src = tmp_path / "a.mp4"
+    src.write_bytes(b"video bytes")
+    tracks = [Track(1, Box(1, 2, 3, 4), redact=False, history={0: Box(1, 2, 3, 4), 1: Box(2, 2, 3, 4)},
+                    flags={1: "lost"}), Track(2, Box(5, 5, 5, 5), source="manual", history={3: Box(5, 5, 5, 5)})]
+    data = session_to_json(tracks, src, {"detector": "yunet"})
+    back, used = session_from_json(data, src)
+    assert [(t.id, t.redact, t.source, t.history, t.flags) for t in back] == \
+           [(t.id, t.redact, t.source, t.history, t.flags) for t in tracks]
+    assert used == {"detector": "yunet"}
+    other = tmp_path / "b.mp4"
+    other.write_bytes(b"other video")
+    with pytest.raises(FaceGuardError, match="different file"):
+        session_from_json(data, other)
+    with pytest.raises(FaceGuardError, match="Not a FaceGuard"):
+        session_from_json({"tracks": []}, src)

@@ -531,3 +531,28 @@ lossless re-encode. Anyone holding the vault and the passphrase can undo
 the redaction, which is the point, so the passphrase is the whole defence.
 **Evidence:** tests: exact round trip; wrong passphrase, different image
 and tampered ciphertext all rejected; no plaintext pixels in the vault.
+
+## D-036 — Parallel chunked analysis with warm-up, and exact frame skipping
+**Date:** 2026-11-16
+**Context:** Analysis is single-core; long videos are slow on a laptop.
+Detection and tracking only depend on nearby frames, so distant parts of
+a video can be analysed independently.
+**Decision:** `core/parallel.py` (CLI `--workers N`) splits the frames into
+one contiguous chunk per process (at least 150 frames each), starts every
+chunk after the first `parallel_warmup` = 30 frames early so faces already
+tracked at the boundary are tracked by both chunks, matches tracks on the
+last frame before the boundary by IoU, and drops the warm-up boxes. Workers
+reach their first frame by decoding forward (`grab()`), not by seeking.
+Re-ID linking needs the whole video and is not available in parallel mode.
+**Trade-off:** Every worker decodes the frames before its chunk, so late
+chunks pay a decode-only prefix; gains flatten beyond the number of
+performance cores.
+**Evidence:** 3,000-frame clip (the ER clip looped 5x) on the Apple M5
+(4 performance cores): sequential 160 FPS; 2 workers 196; 4 workers 279
+(1.75x); 8 workers 293. Leak frames, coverage, track count and ID switches
+identical to sequential in every case. The first version used container
+seeking (`CAP_PROP_POS_FRAMES`) and leaked 43 frames with 8 workers: seeking
+to frame 2,595 of that file returned a different frame (mean absolute
+difference 11.5 grey levels), shifting every box in that chunk in time.
+The UI scrubber still seeks for random access; a wrong preview frame there
+is a known limitation for files with irregular timestamps.

@@ -70,6 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--verify", action="store_true",
                    help="after export, re-scan the output with YuNet and report faces still detectable "
                    "inside hidden regions")
+    p.add_argument("--workers", type=int, default=1, metavar="N",
+                   help="video: analyse in N parallel chunks (long videos; not with --reid or --keep-visible)")
     p.add_argument("--save-tracks", metavar="JSON", help="video only: write per-frame track boxes for evaluation")
     return p
 
@@ -189,7 +191,8 @@ def print_progress(done: int, total: int) -> None:
 
 
 def run_video(
-    src: str, dst: str, cfg: Config, tracks_path: str | None = None, allow=None, verify: bool = False
+    src: str, dst: str, cfg: Config, tracks_path: str | None = None, allow=None, verify: bool = False,
+    workers: int = 1,
 ) -> None:
     if allow:
         # Decided after analysis, so analyse and render are separate passes.
@@ -201,6 +204,14 @@ def run_video(
         kept = [m for m in apply_allow_list(analysis.tracks, collector.embeddings, refs, cfg.allow_threshold)
                 if m.score >= cfg.allow_threshold]
         print(f"Allow-list: {len(kept)} track(s) left visible")
+        render = render_video(src, dst, analysis.tracks, cfg, print_progress)
+        analysis.stats.warnings += render.warnings
+        analysis.stats.loop_seconds += render.loop_seconds
+        analysis.stats.total_seconds = analysis.stats.loop_seconds
+    elif workers > 1:
+        from core.parallel import analyse_parallel
+
+        analysis = analyse_parallel(src, cfg, workers, print_progress)
         render = render_video(src, dst, analysis.tracks, cfg, print_progress)
         analysis.stats.warnings += render.warnings
         analysis.stats.loop_seconds += render.loop_seconds
@@ -282,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         if kind == "image":
             run_image(args.input, args.output, cfg, allow, args.verify, args.vault)
         else:
-            run_video(args.input, args.output, cfg, args.save_tracks, allow, args.verify)
+            run_video(args.input, args.output, cfg, args.save_tracks, allow, args.verify, args.workers)
     except (FaceGuardError, ValueError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
