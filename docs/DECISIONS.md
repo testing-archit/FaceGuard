@@ -369,3 +369,40 @@ follow a face slightly before the ground truth counts it as visible.
 **Evidence:** E12. Crossing clip at N = 10: entry leak frames 8 → 0 with 18
 frames filled; precision 0.944 → 0.935. The ER clip has no late entries and
 is unchanged (0 frames filled).
+
+## D-027 — Stronger blur and pixelation defaults, set by attacking the output
+**Date:** 2026-11-15
+**Context:** Coverage only says a mask was applied, not that it works. E13
+attacks the exported photos: YuNet is re-run on the output, and SFace
+compares each redacted face with its original, both as a same-person test
+(cosine > 0.363) and as a closed-set re-identification against all 76
+original faces (rank-1; chance is about 1 in 76).
+**Options:** keep the old defaults (blur 0.35 of face width, pixelation 8
+blocks) and only warn; strengthen the defaults.
+**Decision:** Blur kernel = 1.0 x face width, pixelation = 5 blocks across
+the padded face. Fill is unchanged and remains the recommended mode.
+**Trade-off:** Coarser-looking output; blur at full strength halves render
+throughput on the ER clip (redaction 1.75 s → 3.47 s, 95.8 → 78.0 FPS).
+Detection of "a face is here" is not removed by blur at any strength
+(69/76 still detectable) — that reveals presence, not identity.
+**Evidence:** E13 on the 7 real photos (76 faces). Old blur: 43 faces
+matchable and 52 re-identified at rank 1. Blur at 1.0: 0 and 0. Old
+pixelation: 1 and 3, with 33 still detectable at 0.3. Five blocks: 0 and 0,
+3 detectable. Fill: 0 and 1 (chance level), 2 detectable at score < 0.42
+(neighbouring faces whose centre falls inside a padded box).
+
+## D-028 — A self-check re-scans every export with YuNet at 0.3
+**Date:** 2026-11-15
+**Context:** Users need evidence for a specific file, not average results.
+**Decision:** `core/verify.py` re-runs YuNet on the output at
+`verify_threshold` = 0.3 (half the redaction threshold, so the checker is
+stronger than the redactor) and reports any face whose centre falls inside a
+region that should be hidden. The UI runs it after every export and records
+the result in the redaction log; the CLI runs it with `--verify`. It always
+uses YuNet, even when Haar did the redaction.
+**Trade-off:** One extra decode and detector pass per export (about the cost
+of per-frame detection). It is a detector, not a recogniser, so a pass means
+"no detectable face", which E13 shows is stricter than "not identifiable".
+**Evidence:** default exports of both synthetic clips: 0 residual detections
+on the crossing clip; on the ER clip 160 of 3,600 hidden face-frames are
+still detectable at 5 blocks (416 at 6, 1,355 at the old 8).

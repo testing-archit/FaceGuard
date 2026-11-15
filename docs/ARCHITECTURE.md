@@ -118,9 +118,9 @@ class Config:
     # redaction
     mode: str = "pixelate"           # blur | pixelate | fill
     padding: float = 0.25            # per side; >= 0.207 needed, see section 7
-    blur_strength: float = 0.35      # kernel size as fraction of box width
+    blur_strength: float = 1.0       # kernel size as fraction of box width (D-027)
     blur_min_kernel: int = 11
-    pixel_blocks: int = 8            # downscale target, N x N
+    pixel_blocks: int = 5            # blocks across the padded face (D-027)
     feather_frac: float = 0.08       # soft edge width as fraction of box width
     fill_color: tuple[int, int, int] = (0, 0, 0)   # BGR
     # io

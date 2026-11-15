@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT))
 from core.detectors import make_detector  # noqa: E402
 from core.errors import IMAGE_EXTS, VIDEO_EXTS, FaceGuardError, media_kind  # noqa: E402
 from core.pipeline import analyse_video, boxes_at, render_image, render_video  # noqa: E402
+from core.verify import verify_image, verify_video  # noqa: E402
 from core.review import (  # noqa: E402
     ThumbnailCollector,
     crop_thumbnail,
@@ -55,7 +56,8 @@ from core.video_io import VideoReader, limit_warnings  # noqa: E402
 from ui.components import face_canvas, timeline  # noqa: E402
 
 # Settings that change what analysis finds; changing them needs a re-run.
-ANALYSIS_KEYS = ("detector", "conf_threshold", "tile_grid", "tracker", "detect_interval", "smooth_window")
+ANALYSIS_KEYS = ("detector", "conf_threshold", "tile_grid", "tracker", "detect_interval", "smooth_window",
+                 "backfill_frames")
 SMALL_FACE_TILES = 2  # tile grid used by the "Search for small faces" switch
 TRACKERS = ("lk", "csrt", "kcf", "none", "off")
 TRACKER_LABELS = {
@@ -70,8 +72,8 @@ MODES = ("fill", "pixelate", "blur")
 MODE_LABELS = {"fill": "Solid", "pixelate": "Pixelate", "blur": "Blur"}
 MODE_HELP = {
     "fill": "Strongest. The face is replaced; nothing can be recovered.",
-    "pixelate": "Strong, but can be matched against a small set of known faces.",
-    "blur": "Weakest. Deblurring models can partially recover blurred faces.",
+    "pixelate": "Strong at 5 blocks or fewer. Finer blocks let a face recogniser match the person.",
+    "blur": "Weakest. Below full strength a face recogniser can still match the person.",
 }
 SHAPE_LABELS = {"ellipse": "Ellipse", "rect": "Rectangle"}
 PRESETS = {
@@ -118,6 +120,7 @@ def state():
         s.events = []
         s.stats = None
         s.export = None
+        s.verify = None  # core.verify.VerifyReport of the last export
         s.thumbs = {}
         s.editor_version = 0
         s.draft = None
@@ -147,6 +150,7 @@ def analysis_key(cfg: Config) -> tuple:
 def tracks_changed(s) -> None:
     """Anything that edits tracks invalidates the export and per-track widgets."""
     s.export = None
+    s.verify = None
     s.editor_version += 1
 
 
@@ -747,6 +751,7 @@ def export(s, cfg: Config) -> None:
                     raise FaceGuardError("Could not encode the image.")
                 out.write_bytes(buf.tobytes())
                 s.export = (out, "image/png" if fmt == ".png" else "image/jpeg")
+                s.verify = verify_image(img, boxes_at(s.tracks, 0), cfg)
             else:
                 bar = st.progress(0.0, text="Rendering")
 
@@ -755,6 +760,12 @@ def export(s, cfg: Config) -> None:
                         bar.progress(min(done / total, 1.0), text=f"Rendering · {done} / {total}")
 
                 stats = render_video(s.src, out, s.tracks, cfg, progress)
+
+                def vprogress(done: int, total: int) -> None:
+                    if total and (done % 5 == 0 or done == total):
+                        bar.progress(min(done / total, 1.0), text=f"Checking the export · {done} / {total}")
+
+                s.verify = verify_video(out, s.tracks, cfg, progress=vprogress)
                 bar.empty()
                 s.export_warnings = stats.warnings
                 s.export = (out, "video/mp4")
@@ -766,11 +777,20 @@ def export(s, cfg: Config) -> None:
         path, mime = s.export
         for w in s.get("export_warnings", []):
             st.warning(w, icon=":material/warning:")
+        rep = s.get("verify")
+        if rep is not None:
+            if rep.ok:
+                st.success(rep.summary(), icon=":material/verified_user:")
+            else:
+                st.warning(rep.summary(), icon=":material/gpp_maybe:")
         info = {"name": Path(path).name}
         if s.kind == "video":
             vi = video_info(s.src)
             info |= {"frames": vi.frame_count, "fps": vi.fps, "size": [vi.width, vi.height]}
         log = redaction_log(s.tracks, cfg, info, s.events)
+        if rep is not None:
+            log["self_check"] = {"detector": "yunet", "threshold": cfg.verify_threshold,
+                                 "frames_checked": rep.frames_checked, "residual_frames": rep.residual_frames}
         if s.allow_scores:
             log["allow_list"] = {
                 "references": len(reference_embeddings(s, cfg)),

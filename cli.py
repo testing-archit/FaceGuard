@@ -50,6 +50,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keep-visible", nargs="+", metavar="PHOTO",
                    help="allow-list: leave people matching these reference photos visible "
                    "(needs scripts/download_model.py --with-allowlist)")
+    p.add_argument("--verify", action="store_true",
+                   help="after export, re-scan the output with YuNet and report faces still detectable "
+                   "inside hidden regions")
     p.add_argument("--save-tracks", metavar="JSON", help="video only: write per-frame track boxes for evaluation")
     return p
 
@@ -85,7 +88,11 @@ def load_references(paths: list[str] | None, cfg: Config):
     return matcher, refs
 
 
-def run_image(src: str, dst: str, cfg: Config, allow=None) -> None:
+def report_verify(report) -> None:
+    print(report.summary(), file=sys.stdout if report.ok else sys.stderr)
+
+
+def run_image(src: str, dst: str, cfg: Config, allow=None, verify: bool = False) -> None:
     img = read_image(src)
     detections = analyse_image(img, cfg)
     if allow:
@@ -97,11 +104,16 @@ def run_image(src: str, dst: str, cfg: Config, allow=None) -> None:
             print(f"Leaving {len(kept)} face(s) visible: they match the allow-list")
         kept_ids = {id(d) for d in kept}
         detections = [d for d in detections if id(d) not in kept_ids]
-    write_image(dst, render_image(img, [d.box for d in detections], cfg))
+    out = render_image(img, [d.box for d in detections], cfg)
+    write_image(dst, out)
     if detections:
         print(f"Redacted {len(detections)} face(s) with {cfg.mode} -> {dst}")
     else:
         print(f"No faces detected. Wrote an unchanged copy -> {dst}")
+    if verify:
+        from core.verify import verify_image
+
+        report_verify(verify_image(out, [d.box for d in detections], cfg))
 
 
 def print_progress(done: int, total: int) -> None:
@@ -114,7 +126,9 @@ def print_progress(done: int, total: int) -> None:
         print(file=sys.stderr)
 
 
-def run_video(src: str, dst: str, cfg: Config, tracks_path: str | None = None, allow=None) -> None:
+def run_video(
+    src: str, dst: str, cfg: Config, tracks_path: str | None = None, allow=None, verify: bool = False
+) -> None:
     if allow:
         # Decided after analysis, so analyse and render are separate passes.
         from core.recognition import EmbeddingCollector, apply_allow_list
@@ -145,6 +159,10 @@ def run_video(src: str, dst: str, cfg: Config, tracks_path: str | None = None, a
         print(f"  frame {e.frame}: track {e.dropped} merged into {e.kept}", file=sys.stderr)
     if tracks_path:
         save_tracks(tracks_path, analysis.tracks, cfg)
+    if verify:
+        from core.verify import verify_video
+
+        report_verify(verify_video(dst, analysis.tracks, cfg, progress=print_progress))
 
 
 def batch_jobs(src_dir: Path, dst_dir: Path) -> list[tuple[Path, Path]]:
@@ -164,7 +182,7 @@ def batch_jobs(src_dir: Path, dst_dir: Path) -> list[tuple[Path, Path]]:
     return [(p, dst_dir / p.name) for p in files]
 
 
-def run_batch(src_dir: str, dst_dir: str, cfg: Config, allow=None) -> int:
+def run_batch(src_dir: str, dst_dir: str, cfg: Config, allow=None, verify: bool = False) -> int:
     """Redact every file in a folder. One bad file is reported and skipped."""
     jobs = batch_jobs(Path(src_dir), Path(dst_dir))
     Path(dst_dir).mkdir(parents=True, exist_ok=True)
@@ -173,9 +191,9 @@ def run_batch(src_dir: str, dst_dir: str, cfg: Config, allow=None) -> int:
         print(f"[{k}/{len(jobs)}] {src.name}")
         try:
             if media_kind(src) == "image":
-                run_image(str(src), str(dst), cfg, allow)
+                run_image(str(src), str(dst), cfg, allow, verify)
             else:
-                run_video(str(src), str(dst), cfg, allow=allow)
+                run_video(str(src), str(dst), cfg, allow=allow, verify=verify)
         except FaceGuardError as exc:
             failed += 1
             print(f"  error: {exc}", file=sys.stderr)
@@ -189,12 +207,12 @@ def main(argv: list[str] | None = None) -> int:
         cfg = config_from_args(args)
         allow = load_references(args.keep_visible, cfg)
         if Path(args.input).is_dir():
-            return run_batch(args.input, args.output, cfg, allow)
+            return run_batch(args.input, args.output, cfg, allow, args.verify)
         kind = check_paths(args.input, args.output)
         if kind == "image":
-            run_image(args.input, args.output, cfg, allow)
+            run_image(args.input, args.output, cfg, allow, args.verify)
         else:
-            run_video(args.input, args.output, cfg, args.save_tracks, allow)
+            run_video(args.input, args.output, cfg, args.save_tracks, allow, args.verify)
     except (FaceGuardError, ValueError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

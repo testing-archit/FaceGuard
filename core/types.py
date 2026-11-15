@@ -166,9 +166,9 @@ class Config:
     # redaction
     mode: str = "pixelate"  # blur | pixelate | fill
     padding: float = 0.25  # per side; >= 0.207 keeps face-box corners masked
-    blur_strength: float = 0.35  # Gaussian kernel as a fraction of box width
+    blur_strength: float = 1.0  # Gaussian kernel as a fraction of box width; 0.35 was re-identifiable (D-027)
     blur_min_kernel: int = 11  # px, floor for tiny faces
-    pixel_blocks: int = 8  # pixelate: downscale ROI to N x N blocks
+    pixel_blocks: int = 5  # pixelate: blocks across the padded face; 8 was re-identifiable (D-027)
     feather_frac: float = 0.08  # soft edge width as a fraction of box width
     fill_color: tuple[int, int, int] = (0, 0, 0)  # BGR
     mask_shape: str = "ellipse"  # ellipse (soft, natural) | rect (covers the whole padded box)
@@ -177,6 +177,10 @@ class Config:
     # allow-list (D-025): SFace cosine similarity needed to leave a face visible.
     # Stricter than OpenCV's 0.363: a false match exposes a stranger.
     allow_threshold: float = 0.5
+
+    # self-check (core/verify.py): re-run YuNet on the exported output
+    verify_threshold: float = 0.3  # lower than conf_threshold: the check should be the stronger detector
+    verify_every: int = 1  # video: check every N-th output frame
 
     # io
     keep_audio: bool = False

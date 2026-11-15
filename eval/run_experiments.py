@@ -65,7 +65,7 @@ DEFAULTS = {
     "out": "eval/out",
     "results_md": "docs/RESULTS.md",
     "base_config": {},
-    "experiments": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", "e11", "e12"],
+    "experiments": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", "e11", "e12", "e13"],
     "videos": [],
     "images": {},
     "e1_detectors": ["yunet", "haar"],
@@ -80,6 +80,9 @@ DEFAULTS = {
     "e10_trackers": ["lk", "csrt", "kcf"],
     "e11_tile_grids": [2, 3],
     "e12_backfill": [0, 5, 10, 20],
+    "e13_settings": [{"label": "blur (default 0.35)", "mode": "blur"},
+                     {"label": "pixelate (default 8 blocks)", "mode": "pixelate"},
+                     {"label": "fill", "mode": "fill"}],
 }
 
 # E7 refresh policies, cumulative: each adds one early-detection rule (D-017).
@@ -374,6 +377,80 @@ def e6_padding(v: VideoSet, run: VideoRun, base: Config, paddings: list[float]) 
     return rows
 
 
+SFACE_MATCH = 0.363  # OpenCV's SFace same-person cosine threshold
+
+
+def e13_output_check(images: list[ImageItem], base: Config, settings: list[dict]) -> dict:
+    """E13: attack the redacted output. Can a detector still find, and a recogniser still match, the face?
+
+    For every annotated photo: detect faces with the default pipeline, redact
+    them with each setting, then on the *output*
+    - detectable: YuNet at 0.3 / 0.6 still fires inside a hidden region (core/verify.py);
+    - matchable: SFace cosine similarity between the original and the
+      redacted face (aligned with the original landmarks, the attacker's best
+      case) is above OpenCV's same-person threshold 0.363;
+    - re-identified: in a closed set of every original face in the dataset,
+      the redacted face's nearest neighbour is its own original (rank-1).
+    """
+    from core.pipeline import render_image
+    from core.recognition import FaceMatcher, available
+    from core.verify import check_frame
+
+    det = make_detector(base)
+    v_lo = make_detector(replace(base, detector="yunet", conf_threshold=0.3, tile_grid=0))
+    v_hi = make_detector(replace(base, detector="yunet", conf_threshold=0.6, tile_grid=0))
+    matcher = FaceMatcher(base) if available(base) else None
+    faces = [(item.image, det.detect(item.image)) for item in images]
+    gallery = None
+    if matcher:
+        gallery = [(k, j, matcher.embed(img, d)) for k, (img, ds) in enumerate(faces) for j, d in enumerate(ds)]
+        gallery = [g for g in gallery if g[2] is not None]
+    rows = []
+    for st in settings:
+        cfg = replace(base, **{k: v for k, v in st.items() if k != "label"})
+        n = lo = hi = match = reid = 0
+        sims: list[float] = []
+        for k, (img, ds) in enumerate(faces):
+            boxes = [d.box for d in ds]
+            out = render_image(img, boxes, cfg)
+            n += len(boxes)
+            lo += len(check_frame(out, boxes, v_lo)[0])
+            hi += len(check_frame(out, boxes, v_hi)[0])
+            if matcher:
+                for j, d in enumerate(ds):
+                    e = matcher.embed(out, d)
+                    own = next((g for g in gallery if g[0] == k and g[1] == j), None)
+                    if e is None or own is None:
+                        continue
+                    sim = float(e @ own[2])
+                    sims.append(sim)
+                    match += sim > SFACE_MATCH
+                    best = max(gallery, key=lambda g: float(e @ g[2]))
+                    reid += best[0] == k and best[1] == j
+        rows.append({"setting": st["label"], "faces": n, "detectable_0.3": lo, "detectable_0.6": hi,
+                     "mean_similarity": round(float(np.mean(sims)), 3) if sims else None,
+                     "matchable": match if matcher else None, "reidentified": reid if matcher else None,
+                     "gallery": len(gallery) if gallery else 0})
+        print(f"  E13 {st['label']:<28} detectable {lo}/{n} (0.3) {hi}/{n} (0.6)  matchable {match}  rank-1 {reid}",
+              flush=True)
+    return {"rows": rows}
+
+
+def e13_videos(videos: list[VideoSet], runner: Runner, n: int) -> dict:
+    """E13 on clips: residual face-frames in the exported default-config video."""
+    from core.verify import verify_video
+
+    out = {}
+    for v in videos:
+        r = runner.run(v, tracker="lk", detect_interval=n)
+        process_video(v.path, runner.tmp / "verify.mp4", replace(runner.base, tracker="lk", detect_interval=n))
+        rep = verify_video(runner.tmp / "verify.mp4", r.tracks, runner.base)
+        out[v.name] = {"frames": rep.frames_checked, "hidden_face_frames": rep.hidden_faces,
+                       "residuals": len(rep.residuals), "residual_frames": len(rep.residual_frames),
+                       "unmasked": len(rep.unmasked)}
+    return out
+
+
 # --- plots -----------------------------------------------------------------
 
 
@@ -664,6 +741,24 @@ def report(res: dict, exp: dict) -> str:
                      r["precision"]] + [r["leak_frames_by_segment"].get(sg, 0) for sg in segs] for r in rows_]
             s += [f"**{v}**", "", table(["Backfill N", "FPS", "Frames filled", "Leak frames", "Precision"] + segs,
                                         rows), ""]
+    if res.get("e13"):
+        e = res["e13"]
+        s += ["## E13 — attacking the redacted output (real photos)", "",
+              "Each face is redacted, then the *output* is attacked. *Detectable*: YuNet still fires inside the "
+              "hidden region. *Matchable*: SFace similarity between the original and the redacted face is above "
+              "OpenCV's same-person threshold 0.363 (aligned with the original landmarks, the attacker's best "
+              f"case). *Re-identified*: in a closed set of all {e['rows'][0]['gallery']} original faces, the "
+              "redacted face's nearest neighbour is its own original (chance is 1 in the gallery size).", ""]
+        rows = [[r["setting"], r["faces"], r["detectable_0.3"], r["detectable_0.6"], r["mean_similarity"],
+                 r["matchable"], r["reidentified"]] for r in e["rows"]]
+        s += [table(["Setting", "Faces", "Detectable (0.3)", "Detectable (0.6)", "Mean similarity",
+                     "Matchable", "Re-identified (rank-1)"], rows), ""]
+        if e.get("videos"):
+            rows = [[v, d["frames"], d["hidden_face_frames"], d["residuals"], d["residual_frames"]]
+                    for v, d in e["videos"].items()]
+            s += ["Exported clips at the default configuration, every frame re-scanned with YuNet at 0.3:", "",
+                  table(["Clip", "Frames", "Hidden face-frames", "Residual detections", "Frames with a residual"],
+                        rows), ""]
     s.append(END)
     return "\n".join(s)
 
@@ -800,6 +895,12 @@ def main(argv: list[str] | None = None) -> int:
             res["e12"] = {v.name: [{"backfill": b, **video_row(runner.run(v, tracker="lk", detect_interval=n,
                                                                           backfill_frames=b))}
                                    for b in exp["e12_backfill"]] for v in videos}
+
+        if real and "e13" in todo:
+            print("E13 output check", flush=True)
+            res["e13"] = e13_output_check(real, base, exp["e13_settings"])
+            if videos:
+                res["e13"]["videos"] = e13_videos(videos, runner, n)
 
     res["peak_rss_mb"] = round(peak_rss_mb(), 1)
     (out / "raw_results.json").write_text(json.dumps(res, indent=1, default=str))
