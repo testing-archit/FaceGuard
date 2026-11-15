@@ -176,3 +176,104 @@ Recorded with every timing in `docs/RESULTS.md`. The development machine is
 an Apple M5, faster than the "mid-range laptop" target, so absolute FPS
 should be re-measured on the demo laptop; ratios between configurations are
 what the report relies on.
+
+## Features added after the core build
+
+**Why is face recognition in a tool that says "no identification"?**
+The allow-list is *verification* against faces the user supplies on the
+same computer ("is this the person in my reference photo?"), opt-in, with no
+names, no database, and embeddings kept only in memory (D-025). It answers a
+real need: hide everyone except the people who consented.
+
+**How does SFace decide two faces match?**
+Both faces are aligned with YuNet's five landmarks (an affine warp of eyes,
+nose and mouth to canonical positions), embedded as 128-d vectors, and
+compared by cosine similarity. Same person scored 0.86–0.93 in our tests,
+different people at most 0.31.
+
+**Why 0.5 and not OpenCV's 0.363?**
+The errors are not symmetric. A false match leaves a stranger visible; a
+missed match only hides someone who wanted to be shown. So the threshold
+leans towards hiding, and the UI shows each score.
+
+**What do tiling, smoothing and coasting do, and why are they off?**
+All three were built, measured, and left off by default because the data
+did not justify them: tiling found no extra faces on the annotated photos
+and added a false positive at ~5x the cost (D-022); smoothing reduced jitter
+by at most ~20% while windows of 5+ frames exposed faces in the whip pan
+(D-019); coasting lost tracks at constant velocity overshot when faces
+changed direction and made KCF worse (D-023). Negative results are reported
+as results.
+
+**Why does the rectangle mask need its corners grown?**
+Feathering blurs the mask and doubles it. Along an edge half the blur mass
+is inside, so 2x reaches full opacity; at a corner only a quarter is, so the
+corner stayed at ~0.98. Growing the rectangle by ~0.6 sigma fixes it (D-020).
+
+**Who labelled the real photos?**
+An AI assistant, from detector proposals that were each inspected visually,
+with every image checked for missed faces. That is stated in the data file
+and in RESULTS.md. Box geometry follows YuNet, which favours YuNet in the
+Haar comparison; a human re-check is the first thing to do before quoting
+the numbers.
+
+## Features added in the further-development round
+
+**A face walks in between two detections. Is it exposed?**
+Not any more (D-026). The pipeline keeps the last 10 frames in memory. When
+a face is detected for the first time, its tracker is started on that
+detection and run *backwards* through the buffered frames. Optical flow
+doesn't care which way time runs: brightness constancy holds from t to t−1
+as well as from t−1 to t. On the crossing clip this removed all 8
+entry-leak frames. The cost is memory for 10 frames and a writer that runs 10
+frames behind.
+
+**How do you know the redaction actually works, not just that a mask was
+drawn?**
+We attack our own output (E13). YuNet is re-run on the redacted image at
+half the normal threshold. SFace then compares each redacted face with the
+original, and we check whether its nearest neighbour among all 76 original
+faces is the right person. At the old defaults, blur was re-identified 52
+times out of 76, which is why the defaults changed. The same check runs on
+every export in the UI, and in the CLI with `--verify`.
+
+**Isn't a face that YuNet can still detect a leak?**
+Detection means "a face is here", not "this is Alice". Blur at full strength
+still lets YuNet find 69 of 76 faces, but SFace matched none of them. That is
+why the self-check is described as stricter than identifiability.
+
+**Did the Kalman filter help?**
+No (D-030, E14). LK never lost a face on our clips, so there was nothing to
+coast. With KCF, moving a lost box with any motion model made leaks *worse*
+(0 → 11–12), because the frozen box was already where the face reappeared.
+We report it as a negative result. Hungarian association likewise changed
+nothing (D-029), which confirms D-009 with data.
+
+**What does re-ID linking do, and why is it opt-in?**
+It gives a face that reappears after being fully hidden its old ID back, by
+appearance (SFace cosine ≥ 0.5). It removed the one ID switch on the
+crossing clip. On the ER clip with KCF it made 74 links, and 1 of them
+joined two different people. If the user then made that ID visible, a
+stranger would be exposed, so it is off by default and every link is listed.
+
+**Do you read number plates?**
+No (D-034). A text *detector* finds where writing is. There is no
+recognition step, so no text is ever extracted. The mask is a padded
+rectangle, so the corners of a plate stay covered.
+
+**Is the pitch-shifted voice anonymous?**
+No (D-033). Shifting the pitch back undoes it. It is offered as a disguise,
+and the UI says mute is the only safe option.
+
+**How is reversible redaction secure?**
+It uses standard primitives only (D-035): scrypt to turn the passphrase into
+a key, and AES-256-GCM so a wrong passphrase or a tampered file fails
+loudly. The hash of the exported image is bound into the encryption, so a
+vault only opens against the exact file it was made for.
+
+**How did the parallel mode go wrong at first?**
+With 8 workers it leaked 43 frames, all inside one chunk. Seeking to frame
+2,595 of that file returned a different frame, so every box in the chunk
+was shifted in time. Workers now reach their start by decoding forward.
+With that fix the results are identical to sequential, and 4 workers are
+1.75x faster (D-036).

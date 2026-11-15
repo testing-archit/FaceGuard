@@ -98,6 +98,29 @@ the CLI.
 
 ---
 
+## Further development (after the stretch goals)
+
+Each item is opt-in unless stated, has a DECISIONS entry and, where it can be
+measured, an experiment in `docs/RESULTS.md`.
+
+- [x] Backfill new faces by tracking backwards; on by default (D-026, E12)
+- [x] Self-check of every export, and an attack on the redacted output (D-027, D-028, E13)
+- [x] Stronger blur and pixelation defaults, chosen from E13 (D-027)
+- [x] Hungarian association (D-029, E14)
+- [x] Kalman-filter coasting (D-030, E14)
+- [x] Re-ID linking of reappearing faces (D-031, E14)
+- [x] Haar profile-face fallback (D-032, E15)
+- [x] Robustness to low light, compression, motion blur, low resolution (E16)
+- [x] Voice pitch shift / mute (D-033)
+- [x] Text and number-plate redaction (D-034)
+- [x] Reversible redaction vault for images (D-035)
+- [x] Parallel chunked analysis (D-036)
+- [x] UI: save/resume a review, compare view, controls for the above
+- [ ] Profile-face and text test sets, so E15 and D-034 can be measured
+- [ ] Standalone packaged app (launchers cover double-click start today)
+
+---
+
 ## Cut order if time runs short
 
 Cut in this order, not any other:

@@ -117,3 +117,9 @@ short videos, with human review before export.
 Face recognition for allow-listing known people; voice redaction; batch folder
 processing; licence plate redaction; GPU acceleration; reversible encrypted
 redaction.
+
+Status after the core build (2026-11-16): allow-listing (D-025), batch folders,
+voice pitch/mute (D-033), text and licence-plate redaction (D-034) and
+reversible encrypted redaction for images (D-035) were implemented as opt-in
+features. GPU acceleration remains out of scope (hard constraint 2), and a
+video vault remains future work.

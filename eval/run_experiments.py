@@ -85,8 +85,8 @@ DEFAULTS = {
                      {"label": "re-ID linking", "reid_link": True},
                      {"label": "coast, velocity", "coast": True},
                      {"label": "coast, Kalman", "coast": True, "coast_model": "kalman"}],
-    "e13_settings": [{"label": "blur (default 0.35)", "mode": "blur"},
-                     {"label": "pixelate (default 8 blocks)", "mode": "pixelate"},
+    "e13_settings": [{"label": "blur (default)", "mode": "blur"},
+                     {"label": "pixelate (default)", "mode": "pixelate"},
                      {"label": "fill", "mode": "fill"}],
 }
 

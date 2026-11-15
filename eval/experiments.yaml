@@ -39,10 +39,10 @@ e10_trackers: [lk, csrt, kcf]       # E10: freeze vs coast when lost
 e11_tile_grids: [2, 3]              # E11: tiled detection on the real photos
 e12_backfill: [0, 5, 10, 20]        # E12: frames tracked backwards from a new face (D-026)
 e13_settings:                       # E13: attack the redacted output (detect + SFace re-identification)
-  - {label: "blur (default 0.35)", mode: blur}
-  - {label: "blur, strength 1.0", mode: blur, blur_strength: 1.0}
-  - {label: "pixelate (default 8 blocks)", mode: pixelate}
-  - {label: "pixelate, 5 blocks", mode: pixelate, pixel_blocks: 5}
+  - {label: "blur 0.35 (old default)", mode: blur, blur_strength: 0.35}
+  - {label: "blur 1.0 (default, D-027)", mode: blur, blur_strength: 1.0}
+  - {label: "pixelate 8 blocks (old default)", mode: pixelate, pixel_blocks: 8}
+  - {label: "pixelate 5 blocks (default, D-027)", mode: pixelate, pixel_blocks: 5}
   - {label: "pixelate, 3 blocks", mode: pixelate, pixel_blocks: 3}
   - {label: "fill", mode: fill}
 e14_trackers: [lk, kcf]             # E14: association / re-ID / motion-model variants (D-029..D-031)

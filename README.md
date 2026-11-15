@@ -24,7 +24,19 @@ protect them is self-defeating. Hence: local only.
 - Per-person selection — tick a face once, it stays hidden through the clip
 - Manual box drawing to cover anything the detector missed
 - Preview before export; optional audio preservation via ffmpeg mux
-  (`--keep-audio`)
+  (`--keep-audio`), with the voice kept, pitch-shifted or muted (`--voice`)
+- Backfill: a face first found mid-clip is also hidden on the frames before
+  its first detection, by tracking it backwards (on by default)
+- Self-check: every export is re-scanned with the detector, and any face it
+  can still find inside a hidden region is reported (`--verify` in the CLI)
+- Optional extras: text redaction for number plates, badges and signs
+  (`--text`); a profile-face detector (`--profile`); re-linking people who
+  reappear after being hidden (`--reid`); Hungarian matching
+  (`--association hungarian`); parallel analysis of long videos (`--workers`)
+- Reversible redaction for photos: the hidden pixels are kept in an
+  AES-256-GCM encrypted `.fgvault` file next to the export (`--vault`,
+  undo with `--restore`)
+- Save a review and resume it later (UI)
 
 ## Install
 
@@ -100,7 +112,20 @@ python cli.py --input clip.mp4 --output out.mp4 --mode pixelate \
 | `--padding` | `0.25` | Expand each box by this fraction of its size, per side |
 | `--shape` | `ellipse` | `ellipse` or `rect` (hides the whole padded box) |
 | `--smooth` | `1` | Video: average boxes over N frames (1 = off) |
+| `--backfill` | `10` | Video: track each new face backwards over this many frames (0 = off) |
 | `--keep-audio` | off | Mux the original audio back into the output |
+| `--voice` | `keep` | With `--keep-audio`: `keep`, `pitch` (a disguise, reversible) or `mute` |
+| `--text` | off | Also hide visible text (plates, badges, signs); detected, never read |
+| `--profile` | off | Add a Haar profile-face detector for heads turned sideways |
+| `--reid` | off | Re-link a face that reappears to its old track (needs the SFace model) |
+| `--association` | `greedy` | `greedy` or `hungarian` detection-to-track matching |
+| `--workers` | `1` | Video: analyse in N parallel chunks |
+| `--verify` | off | Re-scan the export and report faces still detectable in hidden regions |
+| `--vault` | off | Image: also write the original face pixels, encrypted, to `OUTPUT.fgvault` |
+| `--restore VAULT` | | Undo a vault redaction: `--input` is the redacted image |
+
+The vault passphrase is read from `$FACEGUARD_PASSPHRASE` or prompted for; it is
+never taken as an argument, where it would show up in shell history.
 
 `--input` may be a folder: every supported file in it is redacted into the
 `--output` folder.
@@ -123,11 +148,14 @@ is the headline metric: one such frame defeats the tool.
 
 ## A note on how private this actually is
 
-Gaussian blur is the weakest option. Deblurring and face-restoration models can
-partially recover features from blurred faces. Pixelation is better but can be
-attacked if the adversary has a small candidate set of faces. **Solid fill is
-the only mode that destroys the information outright.** Use `fill` when it
-genuinely matters.
+Gaussian blur is the weakest option. We measured it (E13 in
+`docs/RESULTS.md`): at the old default strength, a face recogniser matched 52
+of 76 blurred faces to the right person out of 76 candidates. The defaults are
+now stronger (blur kernel = face width, pixelation = 5 blocks across), and at
+those settings no face was matched. Even so, **solid fill is the only mode
+that destroys the information outright.** Use `fill` when it genuinely
+matters. Lowering the voice pitch is a disguise, not anonymisation: it can be
+shifted back. Mute is the safe choice.
 
 FaceGuard also will not catch every face. Profile views, very small faces, heavy
 motion blur and partial occlusion all cause misses. Always review the preview

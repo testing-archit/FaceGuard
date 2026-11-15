@@ -420,3 +420,34 @@ at the Streamlit boundary.
 | Video fails to open | Message naming likely codec cause |
 | ffmpeg missing with `--keep-audio` | Warn, export silent video, exit 0 |
 | Zero faces detected | Not an error. Export the unchanged copy and say so |
+
+## Modules added after M5
+
+All live in `core/` with no UI imports, and every one is reachable from
+`cli.py`.
+
+| Module | Role | Hooks into |
+|---|---|---|
+| `backfill.py` | Frame buffer; tracks a newly born track backwards over the buffered frames (D-026) | `pipeline._run`, after `TrackManager.step` |
+| `verify.py` | Re-runs YuNet on the exported file; residual = detection centred in a region meant to be hidden (D-028) | CLI `--verify`, UI after export |
+| `motion.py` | Constant-velocity Kalman filter for coasting lost tracks (D-030) | `TrackManager` when `coast_model="kalman"` |
+| `reid.py` | Merges a later track into an earlier one by SFace similarity (D-031) | end of `pipeline._run` when `reid_link` |
+| `text.py` | PP-OCRv3 text detector; text tracks held between detections, rect masks (D-034) | `pipeline._run`, `render_frame` |
+| `vault.py` | AES-256-GCM vault of the original pixels under every mask (D-035) | CLI `--vault` / `--restore` |
+| `parallel.py` | Chunked multi-process analysis with warm-up and IoU stitching (D-036) | CLI `--workers` |
+
+Pipeline changes that go with them:
+
+- `_run` keeps a ring buffer of the last `backfill_frames` frames. Frame j
+  is handed to `on_final(j, frame, face_boxes, text_boxes)` once it leaves
+  the buffer, so the single-pass CLI writer runs that many frames behind the
+  analysis and still renders backfilled boxes.
+- The writer renders each track's recorded mask box (`history[i]`), not its
+  tracker box, so a grown coasting mask is what gets exported.
+- `boxes_at` returns face boxes only; `text_boxes_at` returns text boxes.
+  `render_frame` applies faces (configured shape) and then text (rectangles).
+- Detection-to-track matching is pluggable: `association.MATCHERS`.
+- `_run(first=, stop=)` analyses a frame range; it reaches `first` by
+  decoding forward, because container seeking proved inexact (D-036).
+- `finalise` applies the voice filter (`voice_filter`) in the same ffmpeg
+  call that muxes the audio (D-033).
