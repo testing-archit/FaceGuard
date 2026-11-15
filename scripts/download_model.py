@@ -8,6 +8,7 @@ during setup. Both files are also committed to `models/`, so this script only
 matters if one is missing or corrupted.
 
 - YuNet ONNX from OpenCV Zoo (MIT licence)
+- PP-OCRv3 text detector from OpenCV Zoo (Apache 2.0), for text redaction
 - Haar frontal-face and profile-face cascades from the OpenCV repo (Intel licence, see the
   header of the XML). OpenCV 5 wheels no longer bundle the cascades.
 - Optional: SFace face-embedding ONNX from OpenCV Zoo (Apache 2.0), used only
@@ -59,6 +60,14 @@ ASSETS = [
         "haarcascade_profileface.xml",
         sha256="b39a4a3be45539db146a7fc1d3e761a292c196eb88421185e6a615b3055e612d",
         size=828_514,
+    ),
+    Asset(  # optional text redaction (D-034): PP-OCRv3 text *detector*, Apache 2.0
+        name="text_detection_en_ppocrv3_2023may.onnx",
+        url="https://media.githubusercontent.com/media/opencv/opencv_zoo/"
+        "26cc381e4d2594bb9f47a26eb8fd96c94a13660d/models/text_detection_ppocr/"
+        "text_detection_en_ppocrv3_2023may.onnx",
+        sha256="03f550c6b406fda8bf54bd8327815f6c7e2edd98cea02348c93d879254366587",
+        size=2_423_490,
     ),
 ]
 

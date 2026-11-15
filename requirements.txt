@@ -4,3 +4,4 @@ streamlit>=1.46                  # UI; width="stretch" API
 pyyaml>=6.0                      # eval/experiments.yaml
 matplotlib>=3.7                  # eval plots
 pytest>=7.4
+cryptography>=42                 # optional: reversible redaction vault (AES-GCM, D-035)

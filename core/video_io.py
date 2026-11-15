@@ -143,7 +143,44 @@ def has_audio(path: str | Path) -> bool:
     return bool(result.stdout.strip())
 
 
-def finalise(silent: str | Path, dst: str | Path, audio_src: str | Path | None) -> list[str]:
+def audio_sample_rate(path: str | Path) -> int | None:
+    """Sample rate of the first audio stream, via ffprobe (None if unknown)."""
+    if shutil.which("ffprobe") is None:
+        return None
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate",
+         "-of", "csv=p=0", str(path)], capture_output=True, text=True,
+    )
+    try:
+        return int(result.stdout.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def voice_filter(voice: str, pitch: float, sample_rate: int | None) -> str | None:
+    """ffmpeg audio filter for voice redaction, or None to copy the audio as is.
+
+    - pitch: resample-based pitch shift. `asetrate` replays the samples at
+      rate * pitch (lower pitch, slower), `atempo` restores the duration and
+      `aresample` returns to the original rate. Formants shift with the
+      pitch, so the voice is disguised, but the operation is invertible by
+      shifting back: it deters casual recognition, it is not anonymisation.
+    - mute: silence, keeping the track and its length (the only irreversible option).
+    """
+    if voice == "keep":
+        return None
+    if voice == "mute":
+        return "volume=0"
+    if voice == "pitch":
+        if not sample_rate:
+            return None
+        return f"asetrate={sample_rate * pitch:.0f},aresample={sample_rate},atempo={1 / pitch:.6f}"
+    raise ValueError(f"Unknown voice mode {voice!r}")
+
+
+def finalise(
+    silent: str | Path, dst: str | Path, audio_src: str | Path | None, voice: str = "keep", pitch: float = 0.75
+) -> list[str]:
     """Turn the silent mp4v file into the final output.
 
     Re-encodes to H.264 / yuv420p so it plays in browsers, and maps the first
@@ -164,8 +201,15 @@ def finalise(silent: str | Path, dst: str | Path, audio_src: str | Path | None) 
     # subtitles and data streams: only the redacted picture and, if asked,
     # the audio leave the tool.
     strip = ["-map_metadata", "-1", "-map_chapters", "-1", "-sn", "-dn"]
+    warnings: list[str] = []
     if audio_src is not None:
         cmd += ["-i", str(audio_src), "-map", "0:v:0", "-map", "1:a:0?", "-c:a", "aac", "-shortest"]
+        af = voice_filter(voice, pitch, audio_sample_rate(audio_src) if voice == "pitch" else None)
+        if voice == "pitch" and af is None:
+            af = "volume=0"  # no safe pitch shift without the rate: fail closed
+            warnings.append("Could not read the audio sample rate (ffprobe missing?): audio was muted instead.")
+        if af:
+            cmd += ["-af", af]
     else:
         cmd += ["-map", "0:v:0"]
     cmd += strip + ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", str(dst)]
@@ -176,4 +220,4 @@ def finalise(silent: str | Path, dst: str | Path, audio_src: str | Path | None) 
 
     if audio_src is not None and not has_audio(audio_src):
         return ["Input has no audio track; exported silent video."]
-    return []
+    return warnings

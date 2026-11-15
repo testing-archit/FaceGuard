@@ -12,6 +12,7 @@ MODES = ("blur", "pixelate", "fill")
 SHAPES = ("ellipse", "rect")
 ASSOCIATIONS = ("greedy", "hungarian")
 COAST_MODELS = ("velocity", "kalman")
+VOICES = ("keep", "pitch", "mute")
 FLAG_LOST = "lost"  # tracker lost the face; box frozen at its last position
 FLAG_UNCONFIRMED = "unconfirmed"  # tracker follows it but the last detection missed it
 FLAG_BACKFILL = "backfill"  # box tracked backwards from the first detection (D-026)
@@ -108,6 +109,7 @@ class Config:
     model_path: str = "models/face_detection_yunet_2026may.onnx"
     haar_path: str = "models/haarcascade_frontalface_default.xml"
     profile_path: str = "models/haarcascade_profileface.xml"
+    text_model_path: str = "models/text_detection_en_ppocrv3_2023may.onnx"
     recognizer_path: str = "models/face_recognition_sface_2021dec.onnx"  # optional (allow-list)
 
     # detection
@@ -195,12 +197,25 @@ class Config:
     reid_threshold: float = 0.5  # SFace cosine similarity needed to link two tracks
     reid_max_gap: int = 150  # frames; longest gap between two tracks that may be linked
 
+    # text redaction (D-034): number plates, badges, signs; detected, never read
+    text: bool = False
+    text_binary_threshold: float = 0.3  # DB probability map binarisation (OpenCV Zoo default)
+    text_polygon_threshold: float = 0.5  # min mean probability inside a region
+    text_unclip_ratio: float = 2.0  # region growth; the network predicts shrunk text kernels
+    text_max_candidates: int = 200
+    text_max_side: int = 1280  # px; frames are downscaled to this long side for the detector
+    text_min_px: int = 8  # ignore text regions shorter than this (unreadable anyway)
+    text_padding: float = 0.15  # per side, rectangular mask
+    text_iou: float = 0.3  # match a text box to the previous detection's in video
+
     # self-check (core/verify.py): re-run YuNet on the exported output
     verify_threshold: float = 0.3  # lower than conf_threshold: the check should be the stronger detector
     verify_every: int = 1  # video: check every N-th output frame
 
     # io
     keep_audio: bool = False
+    voice: str = "keep"  # with keep_audio: keep | pitch (disguise, reversible) | mute (D-033)
+    voice_pitch: float = 0.75  # pitch factor for voice = pitch; < 1 lowers the voice
 
     def __post_init__(self) -> None:
         if self.detector not in DETECTORS:
@@ -223,6 +238,10 @@ class Config:
             raise ValueError(f"association must be one of {ASSOCIATIONS}, got {self.association!r}")
         if self.coast_model not in COAST_MODELS:
             raise ValueError(f"coast_model must be one of {COAST_MODELS}, got {self.coast_model!r}")
+        if self.voice not in VOICES:
+            raise ValueError(f"voice must be one of {VOICES}, got {self.voice!r}")
+        if not 0.5 <= self.voice_pitch <= 2.0:
+            raise ValueError("voice_pitch must be in [0.5, 2] (atempo's single-stage range)")
         if self.backfill_frames < 0:
             raise ValueError("backfill_frames must be >= 0")
         if self.smooth_window < 1:

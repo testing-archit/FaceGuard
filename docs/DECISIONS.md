@@ -473,3 +473,61 @@ fallback cannot show a gain here: real photos 76/76 either way; synthetic
 stills gain 0 faces and 6 false positives (minNeighbors 6; 27 at 4, 3 at
 8). Evaluating it needs a profile set (EVALUATION.md section 1 asks for
 one), so it stays off.
+
+## D-033 — Voice: keep, lower pitch, or mute; pitch is labelled a disguise
+**Date:** 2026-11-15
+**Context:** `--keep-audio` copied the voice unchanged, and voices identify
+people (SPEC section 8 parked "voice redaction").
+**Options:** keep; pitch shift; mute; a voice-conversion model (needs a
+neural model and is out of scope for "no training", and heavy on CPU).
+**Decision:** `voice = keep | pitch | mute`, applied as an ffmpeg audio
+filter in the existing mux step. Pitch uses `asetrate` (rate × 0.75),
+`aresample` back and `atempo` to restore duration. If the sample rate
+cannot be read, the export is muted instead (fail closed). The UI states
+that a pitch shift is reversible and only mute is safe.
+**Trade-off:** A pitch shift is undone by shifting back; it deters casual
+recognition only. Mute loses all speech.
+**Evidence:** test: a 440 Hz tone exports at 330 ± 8 Hz with pitch 0.75,
+and at peak amplitude < 0.001 with mute.
+
+## D-034 — Text redaction with a text detector, never a recogniser
+**Date:** 2026-11-15
+**Context:** Number plates, name badges and signs identify people as
+reliably as faces. OpenCV's Russian-plate cascade is not in the OpenCV 5
+data folder and was trained on one country's plates.
+**Options:** plate cascade (region-specific); OCR (reads the text, which a
+privacy tool should not); a text *detector*.
+**Decision:** OpenCV Zoo's PP-OCRv3 English text detector (DB, 2.4 MB,
+Apache 2.0, committed and pinned) through `cv2.dnn_TextDetectionModel_DB`.
+It finds where any writing is, so plates of every format, badges and signs
+are covered; nothing is read. Text regions use rectangular masks with
+0.15 padding. In video, text is detected on scheduled detection frames,
+matched by IoU to the previous detection's regions, held in between, and
+new regions are stamped back over the buffered frames since the previous
+detection. Opt-in.
+**Trade-off:** It hides all writing, including logos and captions the user
+may want kept (they can be unticked); about 30 ms per detection frame at
+640 px.
+**Evidence:** tests: a synthetic plate is found and every glyph pixel is
+covered by the padded rectangle; after fill, the detector finds no text.
+No annotated text set exists, so recall is not measured.
+
+## D-035 — Reversible redaction: an encrypted vault beside the image
+**Date:** 2026-11-15
+**Context:** Some users must publish a redacted image but keep the ability
+to undo it (SPEC section 8, "reversible encrypted redaction").
+**Decision:** The original pixels of every mask region are stored,
+losslessly, in `OUTPUT.fgvault`, encrypted with AES-256-GCM under a key
+derived by scrypt (N = 2^15, r = 8) from a passphrase given by environment
+variable or prompt (never as an argument, which would be visible in the
+process list). The SHA-256 of the exported pixels is bound in as associated
+data, so a vault only opens against the exact file it was made for, and a
+wrong passphrase or a modified vault fails instead of restoring garbage.
+Adds the `cryptography` package (optional; imported only by the vault):
+AES-GCM is not in the standard library and hand-written crypto would not
+be acceptable.
+**Trade-off:** Images only; a video vault needs per-frame crops and a
+lossless re-encode. Anyone holding the vault and the passphrase can undo
+the redaction, which is the point, so the passphrase is the whole defence.
+**Evidence:** tests: exact round trip; wrong passphrase, different image
+and tampered ciphertext all rejected; no plaintext pixels in the vault.

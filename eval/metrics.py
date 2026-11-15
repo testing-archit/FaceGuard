@@ -104,7 +104,7 @@ def evaluate_video(
     m = VideoMetrics(tracks=len(tracks))
     pred_by_frame: dict[int, list[tuple[int, Box]]] = defaultdict(list)
     for t in tracks:
-        if t.redact:
+        if t.redact and t.source != "text":  # text regions are not face predictions
             for f, b in t.history.items():
                 pred_by_frame[f].append((t.id, b))
 

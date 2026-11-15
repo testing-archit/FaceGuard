@@ -18,11 +18,12 @@ from core.pipeline import (
     check_paths,
     process_video,
     read_image,
-    render_image,
+    render_frame,
     save_tracks,
     write_image,
 )
-from core.types import ASSOCIATIONS, DETECTORS, MODES, SHAPES, TRACKERS, Config
+from core.text import TextDetector
+from core.types import ASSOCIATIONS, DETECTORS, MODES, SHAPES, TRACKERS, VOICES, Config
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,6 +55,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile", action="store_true",
                    help="also run the Haar profile-face cascade to catch heads turned sideways (slower)")
     p.add_argument("--keep-audio", action="store_true", help="mux the original audio back into the output")
+    p.add_argument("--text", action="store_true",
+                   help="also hide visible text: number plates, name badges, signs (detected, never read)")
+    p.add_argument("--voice", choices=VOICES, default=d.voice,
+                   help="with --keep-audio: keep the voice, pitch-shift it (a disguise, reversible), or mute it")
+    p.add_argument("--vault", action="store_true",
+                   help="image: also write the original face pixels, encrypted, to OUTPUT.fgvault "
+                   "(passphrase from $FACEGUARD_PASSPHRASE or a prompt)")
+    p.add_argument("--restore", metavar="VAULT",
+                   help="undo a reversible redaction: INPUT is the redacted image, OUTPUT the restored copy")
     p.add_argument("--keep-visible", nargs="+", metavar="PHOTO",
                    help="allow-list: leave people matching these reference photos visible "
                    "(needs scripts/download_model.py --with-allowlist)")
@@ -80,6 +90,8 @@ def config_from_args(args: argparse.Namespace) -> Config:
         reid_link=args.reid,
         profile=args.profile,
         keep_audio=args.keep_audio,
+        voice=args.voice,
+        text=args.text,
     )
 
 
@@ -102,7 +114,33 @@ def report_verify(report) -> None:
     print(report.summary(), file=sys.stdout if report.ok else sys.stderr)
 
 
-def run_image(src: str, dst: str, cfg: Config, allow=None, verify: bool = False) -> None:
+def passphrase(confirm: bool) -> str:
+    """Vault passphrase from $FACEGUARD_PASSPHRASE, else an interactive prompt (never a CLI argument,
+    which would land in shell history and the process list)."""
+    import getpass
+    import os
+
+    pw = os.environ.get("FACEGUARD_PASSPHRASE")
+    if pw:
+        return pw
+    pw = getpass.getpass("Vault passphrase: ")
+    if confirm and getpass.getpass("Repeat passphrase: ") != pw:
+        raise FaceGuardError("Passphrases do not match.")
+    return pw
+
+
+def run_restore(src: str, vault: str, dst: str) -> None:
+    from core.vault import restore
+
+    if Path(dst).resolve() == Path(src).resolve():
+        raise FaceGuardError("Output path is the same as the input.")
+    write_image(dst, restore(read_image(src), Path(vault).read_bytes(), passphrase(confirm=False)))
+    print(f"Restored the original faces -> {dst}")
+
+
+def run_image(
+    src: str, dst: str, cfg: Config, allow=None, verify: bool = False, vault: bool = False
+) -> None:
     img = read_image(src)
     detections = analyse_image(img, cfg)
     if allow:
@@ -114,12 +152,26 @@ def run_image(src: str, dst: str, cfg: Config, allow=None, verify: bool = False)
             print(f"Leaving {len(kept)} face(s) visible: they match the allow-list")
         kept_ids = {id(d) for d in kept}
         detections = [d for d in detections if id(d) not in kept_ids]
-    out = render_image(img, [d.box for d in detections], cfg)
+    texts = TextDetector(cfg).detect(img) if cfg.text else []
+    out = render_frame(img, [d.box for d in detections], texts, cfg)
     write_image(dst, out)
+    if texts:
+        print(f"Hid {len(texts)} text region(s)")
     if detections:
         print(f"Redacted {len(detections)} face(s) with {cfg.mode} -> {dst}")
     else:
         print(f"No faces detected. Wrote an unchanged copy -> {dst}")
+    if vault:
+        from core.text import text_cfg
+        from core.vault import mask_regions, seal, vault_path
+
+        # Seal against the pixels as written (a JPEG decodes differently from `out`).
+        vp = vault_path(dst)
+        h, w = img.shape[:2]
+        regions = (mask_regions([d.box for d in detections], w, h, cfg)
+                   + mask_regions(texts, w, h, text_cfg(cfg)))
+        vp.write_bytes(seal(img, read_image(dst), regions, passphrase(confirm=True)))
+        print(f"Encrypted the original pixels of {len(regions)} region(s) -> {vp}")
     if verify:
         from core.verify import verify_image
 
@@ -219,11 +271,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = config_from_args(args)
         allow = load_references(args.keep_visible, cfg)
+        if args.restore:
+            run_restore(args.input, args.restore, args.output)
+            return 0
+        if args.vault and (Path(args.input).is_dir() or media_kind(Path(args.input)) != "image"):
+            raise FaceGuardError("--vault works on single images only.")
         if Path(args.input).is_dir():
             return run_batch(args.input, args.output, cfg, allow, args.verify)
         kind = check_paths(args.input, args.output)
         if kind == "image":
-            run_image(args.input, args.output, cfg, allow, args.verify)
+            run_image(args.input, args.output, cfg, allow, args.verify, args.vault)
         else:
             run_video(args.input, args.output, cfg, args.save_tracks, allow, args.verify)
     except (FaceGuardError, ValueError, FileNotFoundError) as exc:

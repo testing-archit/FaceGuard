@@ -28,7 +28,8 @@ sys.path.insert(0, str(ROOT))
 
 from core.detectors import make_detector  # noqa: E402
 from core.errors import IMAGE_EXTS, VIDEO_EXTS, FaceGuardError, media_kind  # noqa: E402
-from core.pipeline import analyse_video, boxes_at, render_image, render_video  # noqa: E402
+from core.pipeline import analyse_video, boxes_at, render_frame, render_video, text_boxes_at  # noqa: E402
+from core.text import TEXT_SOURCE, TextDetector  # noqa: E402
 from core.verify import verify_image, verify_video  # noqa: E402
 from core.review import (  # noqa: E402
     ThumbnailCollector,
@@ -51,13 +52,13 @@ from core.review import (  # noqa: E402
 )
 from core.recognition import EmbeddingCollector, FaceMatcher, apply_allow_list  # noqa: E402
 from core.recognition import available as allow_available  # noqa: E402
-from core.types import DETECTORS, Box, Config, Detection, Track  # noqa: E402
+from core.types import DETECTORS, VOICES, Box, Config, Detection, Track  # noqa: E402
 from core.video_io import VideoReader, limit_warnings  # noqa: E402
 from ui.components import face_canvas, timeline  # noqa: E402
 
 # Settings that change what analysis finds; changing them needs a re-run.
 ANALYSIS_KEYS = ("detector", "conf_threshold", "tile_grid", "tracker", "detect_interval", "smooth_window",
-                 "backfill_frames")
+                 "backfill_frames", "profile", "text", "reid_link", "association")
 SMALL_FACE_TILES = 2  # tile grid used by the "Search for small faces" switch
 TRACKERS = ("lk", "csrt", "kcf", "none", "off")
 TRACKER_LABELS = {
@@ -76,6 +77,7 @@ MODE_HELP = {
     "blur": "Weakest. Below full strength a face recogniser can still match the person.",
 }
 SHAPE_LABELS = {"ellipse": "Ellipse", "rect": "Rectangle"}
+VOICE_LABELS = {"keep": "Keep", "pitch": "Lower pitch", "mute": "Mute"}
 PRESETS = {
     "Maximum privacy": dict(mode="fill", mask_shape="rect", padding=0.30, detect_interval=5, conf_threshold=0.5),
     "Balanced": dict(mode="pixelate", mask_shape="ellipse", padding=0.25, detect_interval=10, conf_threshold=0.6),
@@ -220,6 +222,12 @@ def sidebar() -> Config:
         small = st.toggle("Search for small faces", value=False,
                           help="Also scans enlarged sections of the image, for crowds and distant people. "
                           "About 5x slower; best for photos.")
+        profile = st.toggle("Look for side-on faces", value=d.profile,
+                            help="Adds a profile-face detector for heads turned sideways. Slower, and it "
+                            "finds more things that are not faces; remove those in the list.")
+        text = st.toggle("Hide text (plates, badges, signs)", value=d.text,
+                         help="Finds regions with writing and hides them with a rectangle. "
+                         "The text is never read or stored.")
 
         section("Video")
         tracker = st.selectbox("Tracking", TRACKERS, format_func=TRACKER_LABELS.get)
@@ -229,7 +237,17 @@ def sidebar() -> Config:
                            help="Steadier masks, but boxes can lag fast motion. 1 turns it off. "
                            "In testing, 3 added no exposed frames; 5 and above did.")
         keep_audio = st.toggle("Keep original audio", value=d.keep_audio,
-                               help="Audio is copied unchanged. Voices can identify people.")
+                               help="Voices can identify people.")
+        voice = d.voice
+        if keep_audio:
+            voice = st.segmented_control("Voice", VOICES, default=d.voice, format_func=VOICE_LABELS.get,
+                                         width="stretch",
+                                         help="Lower pitch disguises a voice but can be undone by shifting "
+                                         "it back. Mute is the only safe choice.") or d.voice
+        reid = st.toggle("Reconnect people after they are hidden", value=d.reid_link,
+                         disabled=not allow_available(d),
+                         help="When someone is blocked from view and comes back, match their face to give "
+                         "them the same number again. Check the list: two similar faces can be joined.")
 
         section("Keep visible")
         allow_threshold = d.allow_threshold
@@ -256,7 +274,7 @@ def sidebar() -> Config:
         pixel_blocks=pixel_blocks, fill_color=fill, detector=detector, conf_threshold=conf,
         tile_grid=SMALL_FACE_TILES if small else 0,
         tracker=tracker, detect_interval=interval, smooth_window=smooth, keep_audio=keep_audio,
-        allow_threshold=allow_threshold,
+        allow_threshold=allow_threshold, profile=profile, text=text, voice=voice, reid_link=reid,
     )
 
 
@@ -325,6 +343,10 @@ def run_analysis(s, cfg: Config) -> None:
         if s.kind == "image":
             img = load_image(s.src)
             s.tracks = detections_to_tracks(make_detector(cfg).detect(img))
+            if cfg.text:
+                nid = next_track_id(s.tracks)
+                s.tracks += [Track(id=nid + k, box=b, history={0: b}, source=TEXT_SOURCE)
+                             for k, b in enumerate(TextDetector(cfg).detect(img))]
             s.thumbs = {t.id: crop_thumbnail(img, t.box, THUMB_PX, THUMB_PAD) for t in s.tracks}
             if matcher is not None:
                 s.embeddings = {t.id: e for t in s.tracks
@@ -480,7 +502,7 @@ def editor(s, cfg: Config, base: np.ndarray, frame: int) -> None:
     view = st.segmented_control("View", ["Edit", "Preview", "Original"], default="Edit", key="view",
                                 label_visibility="collapsed") or "Edit"
     if view == "Preview":
-        shown = render_image(base, boxes_at(s.tracks, frame), cfg)
+        shown = render_frame(base, boxes_at(s.tracks, frame), text_boxes_at(s.tracks, frame), cfg)
         hint = "Preview of the exported result."
     else:
         shown = base
@@ -605,6 +627,8 @@ def person_row(s, t: Track) -> None:
     meta = []
     if t.source == "manual":
         meta.append("added by hand")
+    elif t.source == "text":
+        meta.append("text region (plate, sign, badge)")
     if s.kind == "video" and t.history:
         meta.append(f"frames {min(t.history)}–{max(t.history)}")
     if t.score is not None:
@@ -615,7 +639,7 @@ def person_row(s, t: Track) -> None:
         flag += f'<span class="fg-match">matches reference {score:.2f}</span>'
     state_cls = "on" if t.redact else "off"
     c[1].markdown(
-        f'<div class="fg-person"><b>Person {t.id}</b><div><span class="fg-state {state_cls}">'
+        f'<div class="fg-person"><b>{"Text" if t.source == "text" else "Person"} {t.id}</b><div><span class="fg-state {state_cls}">'
         f'{"Hidden" if t.redact else "Visible"}</span>{flag}</div><small>{" · ".join(meta)}</small></div>',
         unsafe_allow_html=True,
     )
@@ -744,7 +768,7 @@ def export(s, cfg: Config) -> None:
     if row[1].button("Render and export", type="primary", icon=":material/ios_share:", width="stretch"):
         try:
             if s.kind == "image":
-                img = render_image(load_image(s.src), boxes_at(s.tracks, 0), cfg)
+                img = render_frame(load_image(s.src), boxes_at(s.tracks, 0), text_boxes_at(s.tracks, 0), cfg)
                 params = [cv2.IMWRITE_JPEG_QUALITY, 95] if fmt in (".jpg", ".jpeg") else []
                 ok, buf = cv2.imencode(fmt, img, params)  # fresh encode: no EXIF copied
                 if not ok:
@@ -891,6 +915,7 @@ def batch(s, cfg: Config) -> None:
     if st.button(f"Redact {len(ups)} photo{'s' if len(ups) != 1 else ''}", type="primary",
                  icon=":material/shield:"):
         det = make_detector(cfg)
+        text_det = TextDetector(cfg) if cfg.text else None
         bar = st.progress(0.0)
         results = []
         for k, up in enumerate(ups):
@@ -899,7 +924,7 @@ def batch(s, cfg: Config) -> None:
                 results.append({"name": up.name, "error": "Not a readable image"})
                 continue
             faces = det.detect(img)
-            out = render_image(img, [f.box for f in faces], cfg)
+            out = render_frame(img, [f.box for f in faces], text_det.detect(img) if text_det else [], cfg)
             ext = Path(up.name).suffix.lower()
             ok, buf = cv2.imencode(ext, out, [cv2.IMWRITE_JPEG_QUALITY, 95] if ext != ".png" else [])
             results.append({"name": up.name, "faces": len(faces), "bytes": buf.tobytes() if ok else b"",

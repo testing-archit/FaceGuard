@@ -109,7 +109,7 @@ def verify_video(
         total = reader.info.frame_count
         for i, frame in enumerate(reader):
             if i % every == 0:
-                hidden = [t.history[i] for t in tracks if t.redact and i in t.history]
+                hidden = [t.history[i] for t in tracks if t.redact and i in t.history and t.source != "text"]
                 r, u = check_frame(frame, hidden, det, i)
                 rep.frames_checked += 1
                 rep.hidden_faces += len(hidden)

@@ -29,6 +29,7 @@ from core.detectors import Detector, make_detector
 from core.errors import FaceGuardError, media_kind
 from core.redact import redact
 from core.reid import link_tracks
+from core.text import TEXT_SOURCE, TextTracks, redact_text
 from core.smoothing import smooth_tracks
 from core.tracking import tracker_factory
 from core.types import Box, Config, Detection, Track
@@ -53,6 +54,7 @@ class RunStats:
     faces_redacted: int = 0  # sum over frames
     backfilled_frames: int = 0  # face-frames covered by tracking backwards (D-026)
     reid_seconds: float = 0.0  # SFace embedding for re-ID linking (D-031)
+    text_seconds: float = 0.0  # text detection (D-034)
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -157,11 +159,13 @@ def is_scene_cut(prev: FrameSignature | None, cur: FrameSignature, cfg: Config) 
     return hist_corr < cfg.scene_cut_corr and ncc < cfg.scene_cut_ncc
 
 
-FinalHook = Callable[[int, np.ndarray, list[Box]], None]  # (frame, pixels, boxes to redact)
+FinalHook = Callable[[int, np.ndarray, list[Box], list[Box]], None]  # (frame, pixels, face boxes, text boxes)
 
 
-def _redact_boxes(tracks: list[Track], j: int) -> list[Box]:
-    return [t.history[j] for t in tracks if t.redact and j in t.history]
+def render_frame(frame: np.ndarray, faces: list[Box], texts: list[Box], cfg: Config) -> np.ndarray:
+    """Redact faces (configured mask shape) and text regions (rectangles) on one frame."""
+    out = redact(frame, faces, cfg)
+    return redact_text(out, texts, cfg) if texts else out
 
 
 def _run(
@@ -204,9 +208,13 @@ def _run(
     start = time.perf_counter()
     prev_sig: FrameSignature | None = None
 
+    text = TextTracks(cfg, manager.allocate_id) if cfg.text else None
+
     def finalise_frame(bf: BufferedFrame) -> None:
         if on_final:
-            on_final(bf.index, bf.frame, _redact_boxes(manager.live + manager.finished, bf.index))
+            tracks = manager.live + manager.finished
+            texts = text.all_tracks() if text else []
+            on_final(bf.index, bf.frame, boxes_at(tracks, bf.index), text_boxes_at(texts, bf.index))
 
     with VideoReader(src) as reader:
         stats.warnings += limit_warnings(reader.info)
@@ -221,6 +229,8 @@ def _run(
                 prev_sig = sig
             if cut:
                 manager.scene_cut(i)
+                if text:
+                    text.end_all()
                 stats.scene_cuts += 1
                 last_cut = i
             due = i % interval == 0
@@ -240,6 +250,11 @@ def _run(
             t0 = time.perf_counter()
             present = manager.step(i, frame, gray, detections)
             current = BufferedFrame(i, frame, gray)
+            if text:
+                t1 = time.perf_counter()
+                past = [b.index for b in buffer.newest_first() if b.index >= last_cut]
+                text.step(i, frame, due, past)
+                stats.text_seconds += time.perf_counter() - t1
             if backfill and manager.born:
                 past = buffer.newest_first()
                 for t in manager.born:
@@ -265,8 +280,10 @@ def _run(
             finalise_frame(bf)
         info = reader.info
     tracks, events = manager.all_tracks(), list(manager.events)
+    if text:
+        tracks = sorted(tracks + text.all_tracks(), key=lambda t: t.id)
     if collector:
-        tracks, links = link_tracks(tracks, collector.embeddings, cfg)
+        tracks, links = link_tracks(tracks, collector.embeddings, cfg)  # text tracks have no embedding
         events += [IdEvent(frame=ln.frame, kind="reid_link", kept=ln.kept, dropped=ln.merged) for ln in links]
     stats.loop_seconds = time.perf_counter() - start
     if stats.frames == 0:
@@ -288,12 +305,17 @@ def analyse_video(
 
 
 def boxes_at(tracks: list[Track], frame: int, selected: set[int] | None = None) -> list[Box]:
-    """Boxes to redact on one frame: tracks marked redact (and in `selected`, if given)."""
+    """Face boxes to redact on one frame: tracks marked redact (and in `selected`, if given)."""
     return [
         t.history[frame]
         for t in tracks
-        if t.redact and (selected is None or t.id in selected) and frame in t.history
+        if t.redact and t.source != TEXT_SOURCE and (selected is None or t.id in selected) and frame in t.history
     ]
+
+
+def text_boxes_at(tracks: list[Track], frame: int) -> list[Box]:
+    """Text boxes to redact on one frame (rectangular masks, see core/text.py)."""
+    return [t.history[frame] for t in tracks if t.redact and t.source == TEXT_SOURCE and frame in t.history]
 
 
 def render_video(
@@ -312,14 +334,14 @@ def render_video(
             for i, frame in enumerate(reader):
                 boxes = boxes_at(tracks, i)
                 t0 = time.perf_counter()
-                writer.write(redact(frame, boxes, cfg))
+                writer.write(render_frame(frame, boxes, text_boxes_at(tracks, i), cfg))
                 stats.redact_seconds += time.perf_counter() - t0
                 stats.faces_redacted += len(boxes)
                 stats.frames += 1
                 if progress:
                     progress(i + 1, total)
     stats.loop_seconds = time.perf_counter() - start
-    stats.warnings += finalise(writer.path, dst, src if cfg.keep_audio else None)
+    stats.warnings += finalise(writer.path, dst, src if cfg.keep_audio else None, cfg.voice, cfg.voice_pitch)
     stats.total_seconds = time.perf_counter() - start
     return stats
 
@@ -349,17 +371,17 @@ def process_video(
     faces = 0
     with VideoWriter(dst, info) as writer:
 
-        def write(i: int, frame: np.ndarray, boxes: list[Box]) -> None:
+        def write(i: int, frame: np.ndarray, boxes: list[Box], texts: list[Box]) -> None:
             nonlocal redact_time, faces
             t0 = time.perf_counter()
-            writer.write(redact(frame, boxes, cfg))
+            writer.write(render_frame(frame, boxes, texts, cfg))
             redact_time += time.perf_counter() - t0
             faces += len(boxes)
 
         analysis = _run(src, cfg, progress, on_frame=None, on_final=write)
     analysis.stats.redact_seconds = redact_time
     analysis.stats.faces_redacted = faces
-    analysis.stats.warnings += finalise(writer.path, dst, src if cfg.keep_audio else None)
+    analysis.stats.warnings += finalise(writer.path, dst, src if cfg.keep_audio else None, cfg.voice, cfg.voice_pitch)
     analysis.stats.total_seconds = time.perf_counter() - start
     return analysis
 

@@ -197,6 +197,12 @@ class TrackManager:
                 t.flags[i] = FLAG_UNCONFIRMED
         return present
 
+    def allocate_id(self) -> int:
+        """A fresh track ID, shared with other track kinds (text) so IDs stay unique."""
+        tid = self._next_id
+        self._next_id += 1
+        return tid
+
     @property
     def any_lost(self) -> bool:
         """True if a tracker has lost a face that is still being held (frozen box)."""
