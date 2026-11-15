@@ -42,6 +42,7 @@ sys.path.insert(0, str(ROOT))
 
 from core.detectors import make_detector  # noqa: E402
 from core.pipeline import process_video  # noqa: E402
+from core.smoothing import jitter_px, smooth_tracks  # noqa: E402
 from core.types import Box, Config, Track  # noqa: E402
 from core.video_io import VideoReader  # noqa: E402
 from eval.metrics import (  # noqa: E402
@@ -64,7 +65,7 @@ DEFAULTS = {
     "out": "eval/out",
     "results_md": "docs/RESULTS.md",
     "base_config": {},
-    "experiments": ["e1", "e2", "e3", "e4", "e5", "e6", "e7"],
+    "experiments": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", "e11"],
     "videos": [],
     "images": {},
     "e1_detectors": ["yunet", "haar"],
@@ -74,6 +75,10 @@ DEFAULTS = {
     "e4_thresholds": [0.3, 0.5, 0.6, 0.7, 0.9],
     "e6_paddings": [0.0, 0.1, 0.2, 0.25, 0.3],
     "e7_unconfirmed_intervals": [1, 3],
+    "e8_paddings": [0.0, 0.1, 0.2, 0.25],
+    "e9_windows": [1, 3, 5, 9],
+    "e10_trackers": ["lk", "csrt", "kcf"],
+    "e11_tile_grids": [2, 3],
 }
 
 # E7 refresh policies, cumulative: each adds one early-detection rule (D-017).
@@ -344,6 +349,17 @@ def e4_pr(images: list[ImageItem], base: Config, thresholds: list[float]) -> dic
                       "recall": rec.round(4).tolist()}}
 
 
+def e9_smoothing(v: VideoSet, run: VideoRun, base: Config, windows: list[int]) -> list[dict]:
+    """E9: same tracks smoothed over different windows: steadier masks vs coverage."""
+    rows = []
+    for w in windows:
+        tracks = smooth_tracks(run.tracks, w)
+        m = evaluate_video(tracks, v.truth, v.width, v.height, base, v.segments)
+        rows.append({"window": w, "jitter_px": round(jitter_px(tracks), 3), "leak_frames": m.leak_frames,
+                     "mean_coverage": round(m.mean_coverage, 5), "leak_frames_by_segment": m.leak_frames_by_segment})
+    return rows
+
+
 def e6_padding(v: VideoSet, run: VideoRun, base: Config, paddings: list[float]) -> list[dict]:
     """E6: same tracks, different padding. Coverage vs how much extra area is hidden."""
     rows = []
@@ -394,14 +410,21 @@ def make_plots(res: dict, out: Path) -> list[str]:
     e4 = res.get("e4")
     if e4 and e4["curve"]["recall"]:
         fig, ax = plt.subplots(figsize=(5, 4.5))
-        ax.plot(e4["curve"]["recall"], e4["curve"]["precision"], label=f"YuNet (AP {e4['ap']:.3f})")
+        ax.plot(e4["curve"]["recall"], e4["curve"]["precision"], label=f"YuNet, synthetic stills (AP {e4['ap']:.3f})")
         for row in e4["table"]:
             ax.plot(row["recall"], row["precision"], "o", color="C0")
             ax.annotate(f"{row['threshold']}", (row["recall"], row["precision"]), fontsize=7,
                         xytext=(4, -10), textcoords="offset points")
         haar = res.get("e1", {}).get("haar")
         if haar:
-            ax.plot(haar["recall"], haar["precision"], "s", color="C3", label="Haar (fixed operating point)")
+            ax.plot(haar["recall"], haar["precision"], "s", color="C3", label="Haar, synthetic stills")
+        real = res.get("e4_real")
+        if real and real["curve"]["recall"]:
+            ax.plot(real["curve"]["recall"], real["curve"]["precision"], color="C2",
+                    label=f"YuNet, real photos (AP {real['ap']:.3f})")
+            rh = res.get("e1_real", {}).get("haar")
+            if rh:
+                ax.plot(rh["recall"], rh["precision"], "D", color="C1", label="Haar, real photos")
         ax.set_xlabel("Recall")
         ax.set_ylabel("Precision")
         ax.set_xlim(0, 1.02)
@@ -429,8 +452,13 @@ def make_plots(res: dict, out: Path) -> list[str]:
     e6 = res.get("e6", {})
     if e6:
         fig, ax = plt.subplots(figsize=(6, 4))
-        for vname, rows in e6.items():
-            ax.plot([r["padding"] for r in rows], [r["mean_coverage"] for r in rows], marker="o", label=vname)
+        for k, (vname, rows) in enumerate(e6.items()):
+            ax.plot([r["padding"] for r in rows], [r["mean_coverage"] for r in rows], marker="o", color=f"C{k}",
+                    label=f"{vname}, ellipse")
+            rect = res.get("e8", {}).get(vname, {}).get("rect")
+            if rect:
+                ax.plot([r["padding"] for r in rect], [r["mean_coverage"] for r in rect], marker="s",
+                        linestyle="--", color=f"C{k}", label=f"{vname}, rectangle")
         ax.axvline((2**0.5 - 1) / 2, linestyle=":", color="grey", label="(√2−1)/2 ≈ 0.207")
         ax.set_xlabel("Padding per side (fraction of box)")
         ax.set_ylabel("Mean face coverage")
@@ -477,19 +505,27 @@ def report(res: dict, exp: dict) -> str:
     s += [f"Images: **{imgs['annotated']}** hand-annotated, **{imgs['synthetic']}** stills sampled from "
           f"the synthetic clip ({imgs['faces']} faces in total).", ""]
     if imgs["annotated"] == 0:
-        s += ["> **No hand-annotated real images or clips yet.** Every number below comes from "
+        s += ["> **No annotated real images or clips yet.** Every number below comes from "
               "synthetic data built from one public group photo. Annotate real media with "
               "`eval/annotate.py` (EVALUATION.md section 1) and re-run before quoting these "
               "numbers as the tool's accuracy.", ""]
+    else:
+        s += ["> **About the real photos:** seven public OpenCV / MIT-CMU test photographs, labelled by an "
+              "AI assistant from detector proposals with visual verification (see the provenance note in "
+              "`data/ground_truth.json`). Box geometry follows YuNet, which favours YuNet at the IoU 0.5 "
+              "match, and the photos are easy. **No real video is annotated**: all video results are on "
+              "synthetic clips. Treat these as indicative, not as field accuracy.", ""]
 
     if "headline" in res:
         s += ["## Headline", ""] + [f"- {h}" for h in res["headline"]] + [""]
 
-    if res.get("e1"):
+    if res.get("e1") or res.get("e1_real"):
         s += ["## E1 — YuNet vs Haar on images", ""]
-        rows = [[d, r["images"], r["faces"], r["tp"], r["fp"], r["fn"], r["precision"], r["recall"], r["f1"],
-                 r["mean_coverage"], r["ms_per_image"]] for d, r in res["e1"].items()]
-        s += [table(["Detector", "Images", "Faces", "TP", "FP", "FN", "Precision", "Recall", "F1",
+        rows = [[src, d, r["images"], r["faces"], r["tp"], r["fp"], r["fn"], r["precision"], r["recall"], r["f1"],
+                 r["mean_coverage"], r["ms_per_image"]]
+                for src, key in (("real photos", "e1_real"), ("synthetic stills", "e1"))
+                for d, r in res.get(key, {}).items()]
+        s += [table(["Set", "Detector", "Images", "Faces", "TP", "FP", "FN", "Precision", "Recall", "F1",
                      "Mean coverage", "ms / image"], rows), ""]
     if res.get("e1_video"):
         s += ["Per-frame detection on the clips (no tracking):", ""]
@@ -520,15 +556,31 @@ def report(res: dict, exp: dict) -> str:
               "detections. ID switches count every time a ground-truth person's matched track ID "
               "changes, including re-acquisition after full occlusion.", ""]
 
-    if res.get("e4"):
-        e4 = res["e4"]
-        s += ["## E4 — YuNet confidence threshold", "", "![PR curve](../eval/out/pr_curve.png)", "",
-              f"Average precision over the image set: **{e4['ap']:.3f}**.", ""]
-        rows = [[r["threshold"], r["precision"], r["recall"], r["f1"], r["fp"], r["fn"]] for r in e4["table"]]
-        s += [table(["Threshold", "Precision", "Recall", "F1", "FP", "FN"], rows), ""]
+    if res.get("e4") or res.get("e4_real"):
+        s += ["## E4 — YuNet confidence threshold", "", "![PR curve](../eval/out/pr_curve.png)", ""]
+        for label, key in (("Real photos", "e4_real"), ("Synthetic stills", "e4")):
+            e4 = res.get(key)
+            if not e4:
+                continue
+            s += [f"**{label}** (average precision {e4['ap']:.3f})", ""]
+            rows = [[r["threshold"], r["precision"], r["recall"], r["f1"], r["fp"], r["fn"]] for r in e4["table"]]
+            s += [table(["Threshold", "Precision", "Recall", "F1", "FP", "FN"], rows), ""]
 
+    if res.get("e1_real"):
+        s += ["## E5 — condition breakdown, real photos", ""]
+        dets = list(res["e1_real"])
+        groups = sorted(g for g in {g for d in res["e1_real"].values() for g in d["groups"]} if not g.startswith("source:"))
+        rows = []
+        for g in groups:
+            row = [g.split(":", 1)[1] + (" (size)" if g.startswith("size:") else ""),
+                   res["e1_real"][dets[0]]["groups"].get(g, {}).get("faces", 0)]
+            for d in dets:
+                gg = res["e1_real"][d]["groups"].get(g, {})
+                row += [gg.get("recall", "-"), gg.get("coverage", "-")]
+            rows.append(row)
+        s += [table(["Group", "Faces"] + [f"{d} {k}" for d in dets for k in ("recall", "coverage")], rows), ""]
     if res.get("e1"):
-        s += ["## E5 — condition breakdown", "", "![Condition breakdown](../eval/out/condition_breakdown.png)", "",
+        s += ["## E5 — condition breakdown, synthetic stills", "", "![Condition breakdown](../eval/out/condition_breakdown.png)", "",
               "Images, recall at IoU 0.5 and mean mask coverage at the default padding. "
               "Size groups by box width: small < 40 px, large > 100 px.", ""]
         dets = list(res["e1"])
@@ -567,6 +619,39 @@ def report(res: dict, exp: dict) -> str:
             rows = [[r["policy"], f"{r['fps']:.1f} ± {r['fps_std']:.1f}", r["detector_calls"], r["early_detections"],
                      r["leak_frames"]] + [r["leak_frames_by_segment"].get(sg, 0) for sg in segs] for r in rows_]
             s += [f"**{v}**", "", table(["Policy", "FPS", "Detector calls", "Early", "Leak frames"] + segs, rows), ""]
+    if res.get("e8"):
+        s += [f"## E8 — mask shape (LK, detect every {exp['e3_interval']})", "",
+              "Ellipse vs rectangle at each padding (DECISIONS D-020). The rectangle has no "
+              "corner condition, so it reaches full coverage at lower padding, at the cost of "
+              "hiding more area.", ""]
+        for v, d in res["e8"].items():
+            rows = [[shape, r["padding"], r["mean_coverage"], r["leak_frames"], r["mask_area_ratio"]]
+                    for shape, rows_ in d.items() for r in rows_]
+            s += [f"**{v}**", "", table(["Shape", "Padding", "Mean coverage", "Leak frames", "Mask area ratio"], rows), ""]
+    if res.get("e9"):
+        s += [f"## E9 — temporal smoothing (LK, detect every {exp['e3_interval']})", "",
+              "Jitter = mean magnitude of the second difference of box centres (px). Smoothing is "
+              "zero-phase and off by default (D-019).", ""]
+        for v, rows_ in res["e9"].items():
+            segs = list(rows_[0]["leak_frames_by_segment"])
+            rows = [[r["window"], r["jitter_px"], r["leak_frames"], r["mean_coverage"]]
+                    + [r["leak_frames_by_segment"].get(sg, 0) for sg in segs] for r in rows_]
+            s += [f"**{v}**", "", table(["Window", "Jitter (px)", "Leak frames", "Mean coverage"] + segs, rows), ""]
+    if res.get("e10"):
+        s += [f"## E10 — coasting lost tracks (detect every {exp['e3_interval']})", "",
+              "Freeze = a lost box stays where it was; coast = it keeps its last velocity and its mask "
+              "grows (D-023).", ""]
+        for v, rows_ in res["e10"].items():
+            segs = list(rows_[0]["leak_frames_by_segment"])
+            rows = [[r["tracker"], r["lost"], f"{r['fps']:.1f} ± {r['fps_std']:.1f}", r["leak_frames"], r["precision"]]
+                    + [r["leak_frames_by_segment"].get(sg, 0) for sg in segs] for r in rows_]
+            s += [f"**{v}**", "", table(["Tracker", "When lost", "FPS", "Leak frames", "Precision"] + segs, rows), ""]
+    if res.get("e11"):
+        s += ["## E11 — tiled detection for small faces (real photos)", "",
+              "YuNet on the full frame alone vs also on n x n upscaled tiles (D-022).", ""]
+        rows = [[r["tiles"], r["tp"], r["fp"], r["fn"], r["precision"], r["recall"], r["ms_per_image"]]
+                for r in res["e11"]]
+        s += [table(["Tiles", "TP", "FP", "FN", "Precision", "Recall", "ms / image"], rows), ""]
     s.append(END)
     return "\n".join(s)
 
@@ -631,9 +716,14 @@ def main(argv: list[str] | None = None) -> int:
 
     with tempfile.TemporaryDirectory(prefix="faceguard-eval-") as tmp:
         runner = Runner(base, int(exp.get("runs", 3)), Path(tmp))
+        real = [i for i in images if i.source == "annotated"]
+        synth = [i for i in images if i.source == "synthetic"]
         if images and ({"e1", "e5"} & todo):
             print("E1 images", flush=True)
-            res["e1"] = e1_images(images, base, exp.get("e1_detectors", ["yunet", "haar"]))
+            if synth:
+                res["e1"] = e1_images(synth, base, exp["e1_detectors"])
+            if real:
+                res["e1_real"] = e1_images(real, base, exp["e1_detectors"])
         if videos and "e1" in todo:
             print("E1 clips", flush=True)
             res["e1_video"] = {v.name: {d: video_row(runner.run(v, detector=d, tracker="off"))
@@ -653,7 +743,10 @@ def main(argv: list[str] | None = None) -> int:
                                   for t in exp.get("e3_trackers", ["lk", "csrt", "kcf", "none", "off"])} for v in videos}
         if images and "e4" in todo:
             print("E4 threshold sweep", flush=True)
-            res["e4"] = e4_pr(images, base, exp.get("e4_thresholds", [0.3, 0.5, 0.6, 0.7, 0.9]))
+            if synth:
+                res["e4"] = e4_pr(synth, base, exp["e4_thresholds"])
+            if real:
+                res["e4_real"] = e4_pr(real, base, exp["e4_thresholds"])
         if videos and "e6" in todo:
             print("E6 padding sweep", flush=True)
             n = int(exp.get("e3_interval", 10))
@@ -665,6 +758,30 @@ def main(argv: list[str] | None = None) -> int:
             n = int(exp["e3_interval"])
             res["e7"] = {v.name: [{"policy": name, **video_row(runner.run(v, tracker="lk", detect_interval=n, **kw))}
                                   for name, kw in e7_policies(exp["e7_unconfirmed_intervals"])] for v in videos}
+
+        n = int(exp["e3_interval"])
+        if videos and "e8" in todo:
+            print("E8 mask shape", flush=True)
+            res["e8"] = {v.name: {shape: e6_padding(v, runner.run(v, tracker="lk", detect_interval=n),
+                                                    replace(base, mask_shape=shape), exp["e8_paddings"])
+                                  for shape in ("ellipse", "rect")} for v in videos}
+        if videos and "e9" in todo:
+            print("E9 smoothing", flush=True)
+            res["e9"] = {v.name: e9_smoothing(v, runner.run(v, tracker="lk", detect_interval=n), base,
+                                              exp["e9_windows"]) for v in videos}
+        if videos and "e10" in todo:
+            print("E10 coasting", flush=True)
+            res["e10"] = {v.name: [{"tracker": t, "lost": "coast" if c else "freeze",
+                                    **video_row(runner.run(v, tracker=t, detect_interval=n, coast=c))}
+                                   for t in exp["e10_trackers"] for c in (False, True)] for v in videos}
+        if real and "e11" in todo:
+            print("E11 tiling", flush=True)
+            rows = []
+            for g in [0, *exp["e11_tile_grids"]]:
+                r = e1_images(real, replace(base, tile_grid=g), ["yunet"])["yunet"]
+                rows.append({"tiles": "off" if g == 0 else f"{g} x {g}", **{k: r[k] for k in
+                             ("tp", "fp", "fn", "precision", "recall", "ms_per_image")}})
+            res["e11"] = rows
 
     res["peak_rss_mb"] = round(peak_rss_mb(), 1)
     (out / "raw_results.json").write_text(json.dumps(res, indent=1, default=str))

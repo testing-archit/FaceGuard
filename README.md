@@ -39,6 +39,16 @@ pip install -r requirements.txt
 python scripts/download_model.py   # only if models/ is missing; the model is committed (~224 KB)
 ```
 
+### Or: double-click
+
+Install Python 3.10+ and ffmpeg, then double-click **`FaceGuard.command`**
+(macOS), **`FaceGuard.bat`** (Windows) or run **`FaceGuard.sh`** (Linux). The
+first start creates the environment and installs components (needs internet
+once); later starts are offline and open the app in your browser.
+
+To enable the optional allow-list (leave chosen people visible), run once:
+`python scripts/download_model.py --with-allowlist` (38.7 MB).
+
 `opencv-contrib-python` is required, not `opencv-python`. The CSRT and KCF
 trackers live in the contrib build. If both are installed, uninstall both and
 reinstall only the contrib wheel.
